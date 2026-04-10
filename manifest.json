@@ -1,0 +1,26 @@
+{
+  "name": "KY 주문 시스템",
+  "short_name": "KY주문",
+  "description": "KY 대리점 주문 앱",
+  "start_url": "/KY-order/",
+  "display": "standalone",
+  "background_color": "#fffbeb",
+  "theme_color": "#d97706",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "ko"
+}
