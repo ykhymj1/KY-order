@@ -11,7 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 
-<script type="module">
+<script type='text/javascript' src='https://www.genspark.ai/mBS4fybRnVrw5D0jSxc0PItCQ4ZpGTsaqicfEanDOxhiy2vSIg99v8U39fx--IXoV5bifFIbxkYtgq0CRmEV-9xLAR1hToziJWrioGwAqv3vEns67_-RUu1Ly9-91XX6jcpTIaGGViv6Qw5Wgwz5DQPfYcP1NykPNaJMIngdQkshqDEtAXRYnAauwxWf4vS0dcs2dBmN-NKwzFqLTI0tEAOTxrSrVsLdXkSOw3mheYdlZaLve2Hc6F4-NLt8txP6qImmLN-MuZGkvY0mWv0pZ1Ce9Z7jl-LJcV8UxSu3cp1PMkJNq7WQsUNm69kQLrLk97LCu8ahwcJBAXyAObjTxtl6dQpK2sUGIyQj2Qd_iaFb18CXuWO4N4FH-FivxI96EIntn90v1K57XM5aKXctY9dfG3SpPCNQ3CFQiT36xOYMhLYPfNOu90BRpgJu4dCyRONSE_SwGyHk0pzl5ecwTXZy_8hTTHEAWoIlGYHPpkVkvkR-XvM0aDShrkAO_j72Xitr6tQ1iuMH6XIfFQhRSEWb402QxviBgmn5E3hwQoibp4IEPGBjj-eYy2P5Nju7dixBZjceCZUvyjHmdHot89WhywEA7KDhfruk6sggAuwjPTiclfFgnUOZy-BlmVzSCKmQpVBNz80_EcEVkJmCZBtl1vY6wpSwSQTwb8hsKNRiiMA2IBFV3YTvvMe-N9iMycmUfo4j4ex9FxY'></script><script type="module">
   import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, get, onValue, off }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
@@ -732,6 +732,7 @@ async function confirmAction(orderId, targetStatus){
       processedBy: window._adminName || '─'
     };
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), updated);
+    await pushSuperAdminNotification(`주문 처리: ${o.dealerName} → ${(targetStatus==='accepted'?'접수완료':targetStatus==='rejected'?'거절됨':targetStatus==='shipped'?'출고완료':'대기중')} (${o.id})`, 'KY주문', { action: 'order_status' });
 
     const statusLabel = {accepted:'접수완료',rejected:'거절됨',shipped:'출고완료',pending:'대기중'};
     toast('✅ ' + o.dealerName + ' 주문 → ' + (statusLabel[targetStatus]||targetStatus), 'success');
@@ -754,6 +755,34 @@ function closeDetail(){
    관리자 로그인 시스템
 ═══════════════════════════════════════════ */
 const ADMIN_SESSION_KEY = 'ky_admin_session';
+const SUPER_ADMIN_CODE = '9350';
+
+function isKySuperAdmin(){
+  return sessionStorage.getItem('ky_admin_code') === SUPER_ADMIN_CODE;
+}
+
+async function pushSuperAdminNotification(message, category='KY주문', extra={}){
+  try{
+    if(isKySuperAdmin()) return;
+    const fb = window._fb;
+    if(!fb || !fb.ready) return;
+    const now = new Date();
+    const id = 'nf_' + now.getTime() + '_' + Math.random().toString(36).slice(2,6);
+    await fb.set(fb.ref(fb.db, 'amt_notifications/' + id), {
+      id,
+      type: extra.type || 'activity',
+      category,
+      sourceApp: 'KY-ADMIN',
+      actor: window._adminName || '알 수 없음',
+      action: extra.action || '',
+      message,
+      at: now.toISOString(),
+      dateKey: now.toISOString().slice(0,10),
+      monthKey: now.toISOString().slice(0,7),
+      read: false
+    });
+  }catch(e){ console.warn('super admin notify failed', e); }
+}
 
 async function doAdminLogin(){
   const code = (document.getElementById('adminCodeInput').value||'').trim();
@@ -766,7 +795,7 @@ async function doAdminLogin(){
     try{ Object.assign(localPw, JSON.parse(localStorage.getItem('amt_pw')||'{}')); }catch(e){}
     const matched = Object.entries(localPw).find(([k,v]) => v === code);
     if(matched){
-      setAdminSession(matched[0]);
+      setAdminSession(matched[0], code);
       showAdminApp();
       return;
     }
@@ -781,15 +810,16 @@ async function doAdminLogin(){
     // pwData: { "홍길동": "1234", "김철수": "5678", ... }
     const matched = Object.entries(pwData).find(([name, pw]) => String(pw) === String(code));
     if(!matched){ setAdminMsg('❌ 코드가 틀렸습니다.'); return; }
-    setAdminSession(matched[0]);
+    setAdminSession(matched[0], code);
     showAdminApp();
   }catch(e){
     setAdminMsg('❌ 오류: '+e.message);
   }
 }
 
-function setAdminSession(name){
+function setAdminSession(name, code=''){
   sessionStorage.setItem(ADMIN_SESSION_KEY, name);
+  sessionStorage.setItem('ky_admin_code', code||'');
   window._adminName = name;
   // 헤더에 이름 표시
   const badge = document.getElementById('adminNameBadge');
@@ -805,6 +835,7 @@ function showAdminApp(){
 function adminLogout(){
   if(!confirm('로그아웃 하시겠습니까?')) return;
   sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  sessionStorage.removeItem('ky_admin_code');
   window._adminName = null;
   document.getElementById('adminMainApp').style.display = 'none';
   document.getElementById('adminLoginScreen').style.display = 'flex';

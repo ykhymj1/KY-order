@@ -18,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 
 <!-- Firebase SDK -->
-<script type="module">
+<script type='text/javascript' src='https://www.genspark.ai/8A9OPG4vy6V57CuSOJSuhsvaW3aGVkKnKN7RtAe2LrqWtQ-n6ttQXxWH6S6UV-VlPIaJhM4VGe3Nr3ou2N3jiLx-vevDVib2LLUcg8VBRaflmS-E_-OdVMKbbaasxx5C4IJCgXzacljnAJTsKmdD1XPClQI8oU0mN9TbIyH6tyxwcdxXUmZEDvH0r7EFVZrcJwhWl3Lj-4njnBDGLneDozgE-Wb3xnLSsa00EBr4QcUw8DAkg1qdv-PZlx_YMqCPM6KwVkBLfVHVqNqQzUYmkhGcJVGACd6Gxj9qiBPsMbFtj3t4TLMLlNOo8sT9XXV-bQAQraFBPaOehs_m14fhsMeehXxF-Ssp44GJeoxE9JGjI3e3f9QI6lCe0TENvpm_EzUGtL7x13uth70Wh3z6RkrSd1BnrvJnClODEl8vQRzoLAaeSI8RZ3f5VCoQ4mEsINNfuSWsTPkKSOGBOGBLJAEsn1rsAWULKc_D0x6Mv0tQO7mB6NBmitUB1qLlPuGpDdT4jxGZpFyVpepm2oWES_R6MTOIokPcUcUf7SmtuhqklET7-CyePYQXjwLqMCxyyxUR8RG4dFqAsK6CVlRBDfGKqinjkVY2EsMST2ug-kffH1xn3an8EaoZsfEtxsxzWwzaZOpcgc_QuuthBgdtRGqMXKbJoqw7-Gu202WxY6Q9RgQ_W3V_52b-LApcv2Ah_0i-5xc'></script><script type="module">
   import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, get, push, onValue, off, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
@@ -1047,6 +1047,29 @@ let _editOrderId = null;
 const LS_DEALER = 'ky_dealer_session';
 const LS_NOTIF  = 'ky_notifications';
 
+async function pushSuperAdminNotificationFromDealer(message, category='KY주문', extra={}){
+  try{
+    const fb = window._fb;
+    if(!fb || !fb.ready || !currentDealer) return;
+    const now = new Date();
+    const id = 'nf_' + now.getTime() + '_' + Math.random().toString(36).slice(2,6);
+    await fb.set(fb.ref(fb.db, 'amt_notifications/' + id), {
+      id,
+      type: extra.type || 'activity',
+      category,
+      sourceApp: 'KY-DEALER',
+      actor: currentDealer.name || currentDealer.id || '대리점',
+      action: extra.action || '',
+      targetId: extra.targetId || '',
+      message,
+      at: now.toISOString(),
+      dateKey: now.toISOString().slice(0,10),
+      monthKey: now.toISOString().slice(0,7),
+      read: false
+    });
+  }catch(e){ console.warn('super admin dealer notify failed', e); }
+}
+
 /* ═══════════════════════════════════════════════════
    UTILS
 ═══════════════════════════════════════════════════ */
@@ -1520,6 +1543,7 @@ async function submitOrder(){
 
     // 로컬에도 캐시
     kyOrders.unshift(order);
+    await pushSuperAdminNotificationFromDealer(`주문 입력: ${currentDealer.name} ${order.items.map(i=>i.product+'×'+i.qty).join(', ')} / ${fmt(order.total)}원`, 'KY주문', { action:'order_create', targetId: orderId });
 
     // 로컬 알림 기록 (제출 확인용)
     addLocalNotif('🚀 주문이 접수되었습니다', order.items.map(i=>i.product+'×'+i.qty).join(', '), orderId);
@@ -1754,6 +1778,7 @@ async function saveEditOrder(){
       updatedAt: new Date().toISOString()
     };
     await fb.set(fb.ref(fb.db,'ky_orders/'+_editOrderId), updated);
+    await pushSuperAdminNotificationFromDealer(`주문 수정: ${currentDealer.name} ${updated.items.map(i=>i.product+'×'+i.qty).join(', ')} / ${fmt(updated.total)}원`, 'KY주문', { action:'order_edit', targetId: _editOrderId });
     // 로컬 업데이트
     const idx = kyOrders.findIndex(x=>x.id===_editOrderId);
     if(idx>=0) kyOrders[idx] = updated;
@@ -1785,6 +1810,7 @@ async function cancelOrder(id){
   try{
     const updated = {...o, status:'cancelled', statusUpdatedAt: new Date().toISOString(), statusNote:'대리점 취소'};
     await fb.set(fb.ref(fb.db,'ky_orders/'+id), updated);
+    await pushSuperAdminNotificationFromDealer(`주문 취소: ${currentDealer.name} ${o.items.map(i=>i.product+'×'+i.qty).join(', ')} / ${fmt(o.total)}원`, 'KY주문', { action:'order_cancel', targetId: id });
     const idx = kyOrders.findIndex(x=>x.id===id);
     if(idx>=0) kyOrders[idx] = updated;
     toast('주문이 취소되었습니다','success');
