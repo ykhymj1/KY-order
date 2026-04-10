@@ -18,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 
 <!-- Firebase SDK -->
-<script type='text/javascript' src='https://www.genspark.ai/8A9OPG4vy6V57CuSOJSuhsvaW3aGVkKnKN7RtAe2LrqWtQ-n6ttQXxWH6S6UV-VlPIaJhM4VGe3Nr3ou2N3jiLx-vevDVib2LLUcg8VBRaflmS-E_-OdVMKbbaasxx5C4IJCgXzacljnAJTsKmdD1XPClQI8oU0mN9TbIyH6tyxwcdxXUmZEDvH0r7EFVZrcJwhWl3Lj-4njnBDGLneDozgE-Wb3xnLSsa00EBr4QcUw8DAkg1qdv-PZlx_YMqCPM6KwVkBLfVHVqNqQzUYmkhGcJVGACd6Gxj9qiBPsMbFtj3t4TLMLlNOo8sT9XXV-bQAQraFBPaOehs_m14fhsMeehXxF-Ssp44GJeoxE9JGjI3e3f9QI6lCe0TENvpm_EzUGtL7x13uth70Wh3z6RkrSd1BnrvJnClODEl8vQRzoLAaeSI8RZ3f5VCoQ4mEsINNfuSWsTPkKSOGBOGBLJAEsn1rsAWULKc_D0x6Mv0tQO7mB6NBmitUB1qLlPuGpDdT4jxGZpFyVpepm2oWES_R6MTOIokPcUcUf7SmtuhqklET7-CyePYQXjwLqMCxyyxUR8RG4dFqAsK6CVlRBDfGKqinjkVY2EsMST2ug-kffH1xn3an8EaoZsfEtxsxzWwzaZOpcgc_QuuthBgdtRGqMXKbJoqw7-Gu202WxY6Q9RgQ_W3V_52b-LApcv2Ah_0i-5xc'></script><script type="module">
+<script type="module">
   import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, get, push, onValue, off, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
@@ -1043,32 +1043,10 @@ let _orderListener = null;
 let _dataListener = null;
 let currentOrderType = 'order';  // 'order' | 'return' | 'exchange'
 let _editOrderId = null;
+let _submitting = false;    // 이중제출 방지 플래그
 
 const LS_DEALER = 'ky_dealer_session';
 const LS_NOTIF  = 'ky_notifications';
-
-async function pushSuperAdminNotificationFromDealer(message, category='KY주문', extra={}){
-  try{
-    const fb = window._fb;
-    if(!fb || !fb.ready || !currentDealer) return;
-    const now = new Date();
-    const id = 'nf_' + now.getTime() + '_' + Math.random().toString(36).slice(2,6);
-    await fb.set(fb.ref(fb.db, 'amt_notifications/' + id), {
-      id,
-      type: extra.type || 'activity',
-      category,
-      sourceApp: 'KY-DEALER',
-      actor: currentDealer.name || currentDealer.id || '대리점',
-      action: extra.action || '',
-      targetId: extra.targetId || '',
-      message,
-      at: now.toISOString(),
-      dateKey: now.toISOString().slice(0,10),
-      monthKey: now.toISOString().slice(0,7),
-      read: false
-    });
-  }catch(e){ console.warn('super admin dealer notify failed', e); }
-}
 
 /* ═══════════════════════════════════════════════════
    UTILS
@@ -1506,10 +1484,14 @@ function renderConfirm(){
    SUBMIT ORDER
 ═══════════════════════════════════════════════════ */
 async function submitOrder(){
+  // ★ 이중제출 완전 차단
+  if(_submitting){ toast('제출 중입니다. 잠시 기다려주세요.','info'); return; }
+
   const fb = window._fb;
   if(!fb || !fb.ready){ toast('Firebase 미연결 — 설정을 확인하세요','error'); return; }
   if(!cart.length){ toast('장바구니가 비었습니다','error'); return; }
 
+  _submitting = true;
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
   btn.textContent = '제출 중...';
@@ -1543,7 +1525,6 @@ async function submitOrder(){
 
     // 로컬에도 캐시
     kyOrders.unshift(order);
-    await pushSuperAdminNotificationFromDealer(`주문 입력: ${currentDealer.name} ${order.items.map(i=>i.product+'×'+i.qty).join(', ')} / ${fmt(order.total)}원`, 'KY주문', { action:'order_create', targetId: orderId });
 
     // 로컬 알림 기록 (제출 확인용)
     addLocalNotif('🚀 주문이 접수되었습니다', order.items.map(i=>i.product+'×'+i.qty).join(', '), orderId);
@@ -1551,17 +1532,21 @@ async function submitOrder(){
     hideLoading();
     toast('✅ 주문이 제출되었습니다!', 'success');
 
-    // Reset
+    // ★ 제출 성공 후 반드시 cart와 UI 완전 초기화
     cart = [];
+    currentOrderType = 'order';
     document.getElementById('orderMemo').value = '';
-    goToStepUI(1);
-    loadProductGrid();
 
-    // 홈으로 이동
-    setTimeout(() => showPage('home'), 800);
+    // ★ 홈으로 이동 먼저, 그 다음 스텝 리셋 (페이지 전환 후 리셋)
+    showPage('home');
+    // step UI는 showPage('order') 호출 시 resetOrder()에서 처리됨
+
   } catch(e){
     hideLoading();
     toast('❌ 주문 실패: ' + e.message, 'error');
+  } finally {
+    // ★ 성공/실패 모두 플래그 해제 및 버튼 복원
+    _submitting = false;
     btn.disabled = false;
     btn.textContent = '🚀 주문 제출';
   }
@@ -1592,13 +1577,21 @@ async function loadOrderHistory(){
   }
 }
 
+// ★ 24시간 이내 여부 체크
+function isWithin24h(createdAt){
+  if(!createdAt) return false;
+  return (Date.now() - new Date(createdAt).getTime()) < 24 * 60 * 60 * 1000;
+}
+
 function renderOrderHistoryList(list){
   const el = document.getElementById('orderHistoryList');
-  if(!list.length){
+  // ★ 취소된 주문은 목록에서 숨김
+  const visible = list.filter(o => o.status !== 'cancelled');
+  if(!visible.length){
     el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">주문 내역이 없습니다</div></div>';
     return;
   }
-  el.innerHTML = list.map(o => orderItemHTML(o)).join('');
+  el.innerHTML = visible.map(o => orderItemHTML(o)).join('');
 }
 
 function orderItemHTML(o){
@@ -1614,7 +1607,11 @@ function orderItemHTML(o){
   const itemsText = (o.items||[]).map(i => `${i.product} ${fmt(i.qty)}개`).join(' · ');
   const typeBadge = o.orderType && o.orderType !== 'order'
     ? `<span style="background:${o.orderType==='return'?'#fef3c7':'#eff6ff'};color:${o.orderType==='return'?'#92400e':'#1e40af'};padding:1px 7px;border-radius:10px;font-size:.63rem;font-weight:700;margin-left:6px">${orderTypeMap[o.orderType]||o.orderType}</span>` : '';
-  const canModify = o.status === 'pending';
+
+  // ★ pending 상태이고 24시간 이내인 경우만 수정/취소 버튼 활성화
+  const canModify = o.status === 'pending' && isWithin24h(o.createdAt);
+  const isExpired  = o.status === 'pending' && !isWithin24h(o.createdAt);
+
   return `<div class="order-item">
     <div class="order-item-header" onclick="openOrderDetail('${o.id}')">
       <div>
@@ -1629,7 +1626,7 @@ function orderItemHTML(o){
       ${canModify ? `<div style="display:flex;gap:6px">
         <button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();openEditOrder('${o.id}')">✏️ 수정</button>
         <button class="btn btn-danger btn-xs" onclick="event.stopPropagation();cancelOrder('${o.id}')">✕ 취소</button>
-      </div>` : ''}
+      </div>` : isExpired ? `<span style="font-size:.68rem;color:var(--text3)">⏰ 수정시간 만료</span>` : ''}
     </div>
   </div>`;
 }
@@ -1641,7 +1638,8 @@ function openOrderDetail(id){
     pending:  {label:'대기중 ⏳', cls:'status-pending'},
     accepted: {label:'접수완료 ✅', cls:'status-accepted'},
     rejected: {label:'거절됨 ❌', cls:'status-rejected'},
-    shipped:  {label:'출고완료 🚚', cls:'status-shipped'}
+    shipped:  {label:'출고완료 🚚', cls:'status-shipped'},
+    cancelled:{label:'취소됨 ✕', cls:'status-rejected'}
   };
   const s = statusMap[o.status] || {label:o.status, cls:'status-pending'};
   const itemRows = (o.items||[]).map(i =>
@@ -1672,13 +1670,15 @@ function openOrderDetail(id){
       <span class="confirm-row-value" style="font-size:1.1rem;color:var(--ky)">${fmt(o.total)}원</span>
     </div>
   `;
-  // 수정/취소 버튼 (pending 상태만)
+  // ★ 수정/취소 버튼: pending + 24시간 이내만
   const actionsEl = document.getElementById('orderDetailActions');
   if(actionsEl){
-    if(o.status === 'pending'){
+    if(o.status === 'pending' && isWithin24h(o.createdAt)){
       actionsEl.innerHTML = `
         <button class="btn btn-ghost btn-sm" style="flex:1" onclick="closeOrderDetail();openEditOrder('${o.id}')">✏️ 수정</button>
         <button class="btn btn-danger btn-sm" style="flex:1" onclick="closeOrderDetail();cancelOrder('${o.id}')">✕ 취소</button>`;
+    } else if(o.status === 'pending'){
+      actionsEl.innerHTML = `<span style="font-size:.78rem;color:var(--text3);padding:8px 0">⏰ 주문 후 24시간이 지나 수정/취소가 불가합니다.</span>`;
     } else {
       actionsEl.innerHTML = '';
     }
@@ -1778,7 +1778,6 @@ async function saveEditOrder(){
       updatedAt: new Date().toISOString()
     };
     await fb.set(fb.ref(fb.db,'ky_orders/'+_editOrderId), updated);
-    await pushSuperAdminNotificationFromDealer(`주문 수정: ${currentDealer.name} ${updated.items.map(i=>i.product+'×'+i.qty).join(', ')} / ${fmt(updated.total)}원`, 'KY주문', { action:'order_edit', targetId: _editOrderId });
     // 로컬 업데이트
     const idx = kyOrders.findIndex(x=>x.id===_editOrderId);
     if(idx>=0) kyOrders[idx] = updated;
@@ -1810,7 +1809,6 @@ async function cancelOrder(id){
   try{
     const updated = {...o, status:'cancelled', statusUpdatedAt: new Date().toISOString(), statusNote:'대리점 취소'};
     await fb.set(fb.ref(fb.db,'ky_orders/'+id), updated);
-    await pushSuperAdminNotificationFromDealer(`주문 취소: ${currentDealer.name} ${o.items.map(i=>i.product+'×'+i.qty).join(', ')} / ${fmt(o.total)}원`, 'KY주문', { action:'order_cancel', targetId: id });
     const idx = kyOrders.findIndex(x=>x.id===id);
     if(idx>=0) kyOrders[idx] = updated;
     toast('주문이 취소되었습니다','success');
@@ -1828,7 +1826,7 @@ function renderHome(){
   if(!currentDealer) return;
   const mo = ym(today());
   const myOrders = kyOrders.filter(o => o.dealerId === currentDealer.id);
-  const monthOrders = myOrders.filter(o => o.orderDate.startsWith(mo));
+  const monthOrders = myOrders.filter(o => o.orderDate.startsWith(mo) && o.status !== 'cancelled');
   const pending = myOrders.filter(o => o.status === 'pending').length;
   const accepted = myOrders.filter(o => o.status === 'accepted').length;
   const monthAmt = monthOrders.reduce((s, o) => s + o.total, 0);
@@ -1838,8 +1836,8 @@ function renderHome(){
   document.getElementById('kpiPending').textContent = fmt(pending);
   document.getElementById('kpiAccepted').textContent = fmt(accepted);
 
-  // Recent 5 orders
-  const recent = myOrders.slice(0, 5);
+  // ★ 최근 5개 (취소 제외)
+  const recent = myOrders.filter(o => o.status !== 'cancelled').slice(0, 5);
   const el = document.getElementById('recentOrders');
   if(!recent.length){
     el.innerHTML = '<div class="empty"><div class="empty-icon">📦</div><div class="empty-text">아직 주문 내역이 없습니다</div></div>';
