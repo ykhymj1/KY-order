@@ -1,5 +1,5 @@
-// KY 주문 시스템 Service Worker v5
-const CACHE = 'ky-order-v5';
+// KY 주문 시스템 Service Worker v6
+const CACHE = 'ky-order-v6';
 const ASSETS = [
   '/KY-order/',
   '/KY-order/index.html',

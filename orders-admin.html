@@ -16,27 +16,44 @@
   import { getDatabase, ref, set, get, onValue, off }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  let savedCfg = {};
-  try { savedCfg = JSON.parse(localStorage.getItem('amt_firebase_cfg') || '{}'); } catch(e){}
-  if(!savedCfg.projectId){
-    try { savedCfg = JSON.parse(localStorage.getItem('ky_firebase_cfg') || '{}'); } catch(e){}
-  }
+  // ★ Firebase 설정 하드코딩 — 어느 기기에서든 자동 연결
+  const DEFAULT_FB_CFG = {
+    apiKey: "AIzaSyD9A3cbUujY4agOwB0OL45ccsfRhBXETMw",
+    authDomain: "mymonth-6cd61.firebaseapp.com",
+    databaseURL: "https://mymonth-6cd61-default-rtdb.firebaseio.com",
+    projectId: "mymonth-6cd61",
+    storageBucket: "mymonth-6cd61.firebasestorage.app",
+    messagingSenderId: "1067760522796",
+    appId: "1:1067760522796:web:f97a12c210482e6e8de389"
+  };
+
+  let savedCfg = DEFAULT_FB_CFG;
+  try {
+    const s1 = JSON.parse(localStorage.getItem('amt_firebase_cfg') || '{}');
+    const s2 = JSON.parse(localStorage.getItem('ky_firebase_cfg') || '{}');
+    if(s1.projectId) savedCfg = s1;
+    else if(s2.projectId) savedCfg = s2;
+  } catch(e){}
+
+  // localStorage에도 저장
+  try {
+    if(!localStorage.getItem('amt_firebase_cfg'))
+      localStorage.setItem('amt_firebase_cfg', JSON.stringify(DEFAULT_FB_CFG));
+  } catch(e){}
 
   let app, db, firebaseReady = false;
-  if (savedCfg.projectId) {
-    try {
-      const appName = 'ky-admin';
-      app = getApps().find(a => a.name === appName)
-            || initializeApp({
-                apiKey: savedCfg.apiKey||"", authDomain: savedCfg.authDomain||"",
-                projectId: savedCfg.projectId||"", storageBucket: savedCfg.storageBucket||"",
-                messagingSenderId: savedCfg.messagingSenderId||"", appId: savedCfg.appId||"",
-                databaseURL: savedCfg.databaseURL||""
-               }, appName);
-      db = getDatabase(app);
-      firebaseReady = true;
-    } catch(e){ console.warn('Firebase init failed', e); }
-  }
+  try {
+    const appName = 'ky-admin';
+    app = getApps().find(a => a.name === appName)
+          || initializeApp({
+              apiKey: savedCfg.apiKey, authDomain: savedCfg.authDomain,
+              projectId: savedCfg.projectId, storageBucket: savedCfg.storageBucket,
+              messagingSenderId: savedCfg.messagingSenderId, appId: savedCfg.appId,
+              databaseURL: savedCfg.databaseURL
+             }, appName);
+    db = getDatabase(app);
+    firebaseReady = true;
+  } catch(e){ console.warn('Firebase init failed', e); }
   window._fb = { db, ref, set, get, onValue, off, ready: firebaseReady };
 </script>
 
