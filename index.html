@@ -1523,23 +1523,26 @@ async function submitOrder(){
     // Firebase에 저장: ky_orders/{orderId}
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), order);
 
-    // 로컬에도 캐시
-    kyOrders.unshift(order);
+    // ★★★ kyOrders.unshift(order) 제거 ★★★
+    // onValue 리스너가 Firebase 변경을 감지해서 자동으로 kyOrders를 갱신함
+    // 여기서 unshift를 하면 리스너 콜백과 중복되어 이중 표시됨
 
     // 로컬 알림 기록 (제출 확인용)
     addLocalNotif('🚀 주문이 접수되었습니다', order.items.map(i=>i.product+'×'+i.qty).join(', '), orderId);
 
+    // ★ 텔레그램으로 주문 알림 발송 (총관리자, 비동기)
+    sendTelegramOrder(order).catch(() => {});
+
     hideLoading();
     toast('✅ 주문이 제출되었습니다!', 'success');
 
-    // ★ 제출 성공 후 반드시 cart와 UI 완전 초기화
+    // ★ 제출 성공 후 cart와 UI 완전 초기화
     cart = [];
     currentOrderType = 'order';
     document.getElementById('orderMemo').value = '';
 
-    // ★ 홈으로 이동 먼저, 그 다음 스텝 리셋 (페이지 전환 후 리셋)
+    // ★ 홈으로 이동
     showPage('home');
-    // step UI는 showPage('order') 호출 시 resetOrder()에서 처리됨
 
   } catch(e){
     hideLoading();
@@ -1550,6 +1553,63 @@ async function submitOrder(){
     btn.disabled = false;
     btn.textContent = '🚀 주문 제출';
   }
+}
+
+/* ═══════════════════════════════════════════════════════
+   ★ 텔레그램 알림 (KY 주문앱)
+   ※ index-AMT.html의 TELEGRAM_BOT_TOKEN / SUPER_ADMIN_CHAT_ID 와
+      같은 값을 아래에도 입력하세요.
+═══════════════════════════════════════════════════════ */
+const KY_TELEGRAM_BOT_TOKEN  = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';  // KY 주문 봇
+const KY_SUPER_ADMIN_CHAT_ID = '1988388217';  // 총관리자 채팅 ID
+// 나중에 추가할 관리자 채팅 ID
+// const KY_ADMIN2_CHAT_ID = '';
+// const KY_ADMIN3_CHAT_ID = '';
+
+async function sendTelegramKY(chatId, text){
+  if(!KY_TELEGRAM_BOT_TOKEN || !chatId){
+    console.warn('[텔레그램-KY] 봇 토큰 또는 채팅 ID 미설정');
+    return;
+  }
+  try{
+    const res = await fetch('https://api.telegram.org/bot' + KY_TELEGRAM_BOT_TOKEN + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'HTML' })
+    });
+    const data = await res.json();
+    if(!data.ok) console.warn('[텔레그램-KY] 발송 실패:', data.description);
+    else console.log('[텔레그램-KY] 발송 완료');
+  } catch(e){
+    console.warn('[텔레그램-KY] 오류:', e.message);
+  }
+}
+
+/* 신규 주문 → 총관리자 텔레그램 */
+async function sendTelegramOrder(order){
+  const typeLabels = {order:'일반주문', return:'반품', exchange:'교환'};
+  const now = new Date().toLocaleString('ko-KR', {
+    month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+  });
+  const itemLines = (order.items||[]).map(function(i){
+    return '  • ' + i.product + ' ' + i.qty + '개 × ' + Number(i.price).toLocaleString('ko-KR') + '원';
+  });
+  const lines = [
+    '📦 <b>새 주문 접수!</b>',
+    '',
+    '🏢 대리점: <b>' + order.dealerName + '</b>',
+    '📋 유형: ' + (typeLabels[order.orderType] || order.orderTypeLabel || '일반주문'),
+    '📅 주문일: ' + order.orderDate,
+    '',
+    '<b>주문 상품:</b>'
+  ].concat(itemLines).concat([
+    '',
+    '📦 총수량: ' + order.totalQty + '개',
+    '💰 합계: <b>' + Number(order.total).toLocaleString('ko-KR') + '원</b>',
+    order.memo ? '📝 메모: ' + order.memo : '',
+    '🕐 접수: ' + now
+  ]).filter(function(l){ return l !== ''; });
+  await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, lines.join('\n'));
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1853,12 +1913,20 @@ function startListeners(){
   const fb = window._fb;
   if(!fb || !fb.ready) return;
   if(!currentDealer) return;
+  // ★ 이미 리스너가 등록되어 있으면 중복 등록 방지
+  if(_orderListener) return;
 
-  // 내 주문 상태 변화 감지
+  // ★ firstLoad: enterApp에서 loadOrderHistory()로 이미 데이터를 불러왔으므로
+  //   onValue의 첫 번째 즉시 콜백은 무시 (중복 방지)
+  let firstLoad = true;
+
   _orderListener = fb.onValue(fb.ref(fb.db, 'ky_orders'), (snap) => {
+    // ★ 첫 번째 콜백은 스킵 (loadOrderHistory에서 이미 처리함)
+    if(firstLoad){ firstLoad = false; return; }
+
     if(!snap.exists()){ kyOrders = []; renderHome(); renderOrderHistoryList([]); return; }
     const all = snap.val();
-    const prev = JSON.parse(JSON.stringify(kyOrders)); // copy
+    const prev = JSON.parse(JSON.stringify(kyOrders)); // 상태 변화 감지용 복사본
     kyOrders = Object.values(all)
       .filter(o => o.dealerId === currentDealer.id)
       .sort((a,b) => b.createdAt.localeCompare(a.createdAt));
@@ -1867,13 +1935,13 @@ function startListeners(){
     kyOrders.forEach(o => {
       const old = prev.find(x => x.id === o.id);
       if(old && old.status !== o.status){
-        const statusLabel = {accepted:'접수완료 ✅', rejected:'거절됨 ❌', shipped:'출고완료 🚚'};
+        const statusLabel = {accepted:'접수완료 ✅', shipped:'출고완료 🚚'};
         const label = statusLabel[o.status];
         if(label){
           const msg = `주문 상태 변경: ${label}`;
-          const detail = o.items.map(i=>i.product+'×'+i.qty).join(', ');
+          const detail = (o.items||[]).map(i=>i.product+'×'+i.qty).join(', ');
           addLocalNotif(msg, detail, o.id);
-          toast(msg, o.status === 'rejected' ? 'error' : 'success');
+          toast(msg, 'success');
           if(Notification && Notification.permission === 'granted'){
             new Notification('KY 주문 시스템', { body: msg + '\n' + detail, icon: 'icon-192.png' });
           }
@@ -1888,15 +1956,16 @@ function startListeners(){
   });
 
   // amt_data 변경 감지 (제품/재고 업데이트)
-  _dataListener = fb.onValue(fb.ref(fb.db, 'amt_data'), (snap) => {
-    if(!snap.exists()) return;
-    amtData = snap.val();
-    // 주문 페이지가 활성 상태면 제품 목록 갱신
-    if(document.getElementById('page-order').classList.contains('active') &&
-       document.getElementById('orderStep1').style.display !== 'none'){
-      loadProductGrid();
-    }
-  });
+  if(!_dataListener){
+    _dataListener = fb.onValue(fb.ref(fb.db, 'amt_data'), (snap) => {
+      if(!snap.exists()) return;
+      amtData = snap.val();
+      if(document.getElementById('page-order').classList.contains('active') &&
+         document.getElementById('orderStep1').style.display !== 'none'){
+        loadProductGrid();
+      }
+    });
+  }
 
   // 알림 권한 요청
   if(Notification && Notification.permission === 'default'){
@@ -1996,12 +2065,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 서비스워커 등록 (경로 자동 감지)
-  if('serviceWorker' in navigator){
-    const swPath = location.hostname.endsWith('github.io')
-      ? '/KY-order/sw.js'
-      : 'sw.js';
-    navigator.serviceWorker.register(swPath).catch(e => console.warn('SW:', e));
+  // 서비스워커 등록 — github.io 배포환경에서만 작동
+  // (claude.ai, 로컬 등 다른 환경에서는 보안 정책상 등록 불가 → 무시)
+  if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
+    const swPath = '/KY-order/sw.js';
+    navigator.serviceWorker.register(swPath)
+      .then(r => console.log('[KY SW] 등록 완료:', r.scope))
+      .catch(e => console.log('[KY SW] 등록 스킵 (정상):', e.message));
   }
 
   // 자동 로그인 시도

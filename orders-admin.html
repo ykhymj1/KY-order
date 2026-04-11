@@ -780,12 +780,70 @@ async function confirmAction(orderId, targetStatus){
       read: false
     });
 
+    // ★ 텔레그램으로 상태 변경 알림 (총관리자)
+    sendTelegramStatus(o, targetStatus, note, now).catch(() => {});
+
     toast('✅ ' + o.dealerName + ' 주문 → ' + (statusLabel[targetStatus]||targetStatus), 'success');
     closeDetail();
   } catch(e){
     toast('❌ 처리 실패: ' + e.message, 'error');
     if(confirmBtn){ confirmBtn.disabled = false; confirmBtn.textContent = '확인'; }
   }
+}
+
+/* ═══════════════════════════════════════════════════════
+   ★ 텔레그램 알림 (orders-admin-KY)
+   ※ index-AMT.html의 TELEGRAM_BOT_TOKEN / SUPER_ADMIN_CHAT_ID 와
+      같은 값을 아래에도 입력하세요.
+═══════════════════════════════════════════════════════ */
+const ADMIN_TELEGRAM_BOT_TOKEN  = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';  // KY 주문 봇
+const ADMIN_SUPER_CHAT_ID       = '1988388217';  // 총관리자 채팅 ID
+// 나중에 추가할 관리자 채팅 ID
+// const ADMIN2_CHAT_ID = '';
+// const ADMIN3_CHAT_ID = '';
+
+async function sendTelegramAdmin(chatId, text){
+  if(!ADMIN_TELEGRAM_BOT_TOKEN || !chatId){
+    console.warn('[텔레그램-Admin] 봇 토큰 또는 채팅 ID 미설정');
+    return;
+  }
+  try{
+    const res = await fetch('https://api.telegram.org/bot' + ADMIN_TELEGRAM_BOT_TOKEN + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'HTML' })
+    });
+    const data = await res.json();
+    if(!data.ok) console.warn('[텔레그램-Admin] 발송 실패:', data.description);
+    else console.log('[텔레그램-Admin] 발송 완료');
+  } catch(e){ console.warn('[텔레그램-Admin] 오류:', e.message); }
+}
+
+/* 주문 상태변경 → 총관리자 텔레그램 */
+async function sendTelegramStatus(order, targetStatus, note, nowIso){
+  const statusEmoji = {accepted:'✅', shipped:'🚚', pending:'⏳'};
+  const statusLabel = {accepted:'접수완료', shipped:'출고완료', pending:'대기중'};
+  const nowStr = new Date(nowIso).toLocaleString('ko-KR', {
+    month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+  });
+  const itemLines = (order.items||[]).map(function(i){
+    return '  • ' + i.product + ' ' + i.qty + '개 × ' + fmt(i.price) + '원';
+  });
+  const lines = [
+    (statusEmoji[targetStatus]||'📦') + ' <b>KY주문 ' + (statusLabel[targetStatus]||targetStatus) + '</b>',
+    '',
+    '🏢 대리점: <b>' + order.dealerName + '</b>',
+    '📦 주문번호: ' + order.id,
+    '📅 주문일: ' + (order.orderDate||''),
+    '',
+    '<b>주문 상품:</b>'
+  ].concat(itemLines).concat([
+    '',
+    '💰 합계: <b>' + fmt(order.total) + '원</b>',
+    note ? '📝 메모: ' + note : '',
+    '🕐 처리: ' + nowStr + ' / ' + (window._adminName||'─')
+  ]).filter(function(l){ return l !== undefined; });
+  await sendTelegramAdmin(ADMIN_SUPER_CHAT_ID, lines.join('\n'));
 }
 
 /* ═══════════════════════════════════════════════
@@ -1105,9 +1163,11 @@ function toggleAdminSettings(){
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  if('serviceWorker' in navigator){
-    const swPath = location.hostname.endsWith('github.io') ? '/AMT/sw.js' : 'sw.js';
-    navigator.serviceWorker.register(swPath).catch(()=>{});
+  // SW 등록 — github.io 배포환경에서만
+  if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
+    navigator.serviceWorker.register('/KY-order/sw.js')
+      .then(r => console.log('[KY Admin SW] 등록 완료:', r.scope))
+      .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
   }
   // 세션 복원 시도
   const saved = sessionStorage.getItem(ADMIN_SESSION_KEY);
