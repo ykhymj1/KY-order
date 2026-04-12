@@ -555,8 +555,6 @@ function startListener(){
               }
             });
           }
-          // ★ 화면 팝업 (확인/닫기 버튼 눌러야 닫힘)
-          showNewOrderPopup(o);
         });
         document.getElementById('newOrderBadge').style.display = 'inline-flex';
         setTimeout(()=>{ document.getElementById('newOrderBadge').style.display='none'; }, 15000);
@@ -682,10 +680,16 @@ function renderOrders(list){
       ${o.statusNote ? `<div class="order-memo" style="border-color:var(--ky)">📝 ${o.statusNote}${o.processedBy?' · <b>'+o.processedBy+'</b>':''}</div>` : ''}
       <div class="order-actions">
         ${o.status === 'pending' ? `
-          <button class="btn btn-success btn-sm" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
-          <button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 출고</button>
+          <button class="btn btn-success" style="padding:10px 20px;font-size:.9rem;font-weight:800" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
+          ${o.orderType === 'return'
+            ? `<button class="btn btn-outline" style="padding:10px 20px;font-size:.9rem;font-weight:800;color:var(--green);border-color:var(--green)" onclick="openAction('${o.id}','shipped')">📥 입고</button>`
+            : `<button class="btn btn-outline" style="padding:10px 20px;font-size:.9rem;font-weight:800" onclick="openAction('${o.id}','shipped')">🚚 출고</button>`
+          }
         ` : o.status === 'accepted' ? `
-          <button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 출고처리</button>
+          ${o.orderType === 'return'
+            ? `<button class="btn btn-outline" style="padding:10px 20px;font-size:.9rem;font-weight:800;color:var(--green);border-color:var(--green)" onclick="openAction('${o.id}','shipped')">📥 입고처리</button>`
+            : `<button class="btn btn-outline" style="padding:10px 20px;font-size:.9rem;font-weight:800" onclick="openAction('${o.id}','shipped')">🚚 출고처리</button>`
+          }
           <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
         ` : o.status === 'shipped' ? `
           <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>
@@ -704,14 +708,17 @@ function openAction(orderId, targetStatus){
   if(!o) return;
   _currentDetailId = orderId;
 
+  // ★ 반품이면 '출고→입고', 교환이면 '출고(재고변동없음)' 로 라벨 변경
+  const isReturn   = o.orderType === 'return';
+  const isExchange = o.orderType === 'exchange';
   const statusLabels = {
     accepted: '접수 완료 처리',
-    shipped: '출고 완료 처리',
+    shipped: isReturn ? '입고 완료 처리 (재고+, 매출-)' : isExchange ? '출고처리 (재고·매출 변동없음)' : '출고 완료 처리',
     pending: '대기중으로 되돌리기'
   };
   const statusColors = {
     accepted: 'var(--green)',
-    shipped: 'var(--blue)',
+    shipped: isReturn ? 'var(--green)' : isExchange ? 'var(--ky)' : 'var(--blue)',
     pending: 'var(--gray)'
   };
 
@@ -781,9 +788,18 @@ async function confirmAction(orderId, targetStatus){
     };
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), updated);
 
-    // ★ 출고 처리 시 AMT amt_data 자동 업데이트
+    // ★ 주문 유형별 AMT 자동업데이트 분기
     if(targetStatus === 'shipped'){
-      await autoUpdateAmtOnShipped(o, note, now);
+      if(o.orderType === 'return'){
+        // 반품: 재고+, 매출-, 수금관리에 표시안함
+        await autoUpdateAmtOnReturn(o, note, now);
+      } else if(o.orderType === 'exchange'){
+        // 교환: 재고·매출 변동없음, 수금관리에 표시안함
+        await autoUpdateAmtOnExchange(o, note, now);
+      } else {
+        // 일반주문: 재고-, 매출+, 수금관리 등록
+        await autoUpdateAmtOnShipped(o, note, now);
+      }
     }
 
     // ★ 전체 사용자 푸시 알림 (amt_notifications에 저장 → AMT 앱에서 감지)
@@ -907,7 +923,7 @@ async function autoUpdateAmtOnShipped(order, note, now){
 
     // ② AMT 발주(orders) + 수금관리 자동 등록
     // 이미 처리된 주문인지 확인
-    const alreadyExists = amtOrders.some(o => o.relKyOrder === order.id);
+    const alreadyExists = amtOrders.some(ao => ao.relKyOrder === order.id);
     if(!alreadyExists && dealer){
       for(const item of (order.items||[])){
         const dp = (dealer.products||[]).find(p => p.product === item.product);
@@ -944,7 +960,8 @@ async function autoUpdateAmtOnShipped(order, note, now){
     toast('✅ 출고 완료 — KY재고 차감 + AMT 발주/수금 자동 등록!', 'success');
   } catch(e){
     console.error('AMT 자동 업데이트 실패:', e);
-    toast('⚠️ 출고는 됐으나 AMT 자동업데이트 실패: ' + e.message, 'error');
+    // 출고 Firebase 저장은 이미 완료됨
+    console.warn('자동업데이트 후처리 오류(Firebase는 완료):', e.message);
   }
 }
 
@@ -974,6 +991,86 @@ function calcDueDate(orderDate, term){
   return last.toISOString().slice(0,10);
 }
 
+/* ═══════════════════════════════════════════════
+   ★ 반품 입고처리: 재고+, 매출-, 수금관리 미등록
+═══════════════════════════════════════════════ */
+async function autoUpdateAmtOnReturn(order, note, now){
+  const fb = window._fb;
+  if(!fb||!fb.ready) return;
+  try{
+    const snap = await fb.get(fb.ref(fb.db, 'amt_data'));
+    if(!snap.exists()){ toast('⚠️ AMT 데이터 없음','error'); return; }
+    const data = snap.val();
+    const invLogs = data.invLogs || [];
+    const amtOrders = data.orders || [];
+
+    // ① KY 재고 입고 (+) 처리
+    for(const item of (order.items||[])){
+      const invId = 'inv_ky_ret_' + order.id + '_' + item.product.replace(/\s/g,'_');
+      if(invLogs.some(i => i.id === invId)) continue;
+      invLogs.push({
+        id: invId,
+        date: order.orderDate || now.slice(0,10),
+        product: item.product,
+        qty: Math.abs(item.qty),   // 입고: 양수
+        type: 'in',
+        company: 'KY',
+        memo: '[KY반품입고] ' + order.dealerName + ' #' + order.id,
+        relKyOrder: order.id,
+        createdAt: now
+      });
+    }
+
+    // ② AMT 발주에 마이너스 금액으로 등록 (매출 차감, 수금관리 제외용 플래그)
+    const alreadyExists = amtOrders.some(function(ao){ return ao.relKyOrder === order.id; });
+    if(!alreadyExists){
+      for(const item of (order.items||[])){
+        amtOrders.push({
+          id: 'ord_ky_ret_' + order.id + '_' + item.product.replace(/\s/g,'_'),
+          dealerId: order.dealerId,
+          dealerName: order.dealerName,
+          product: item.product,
+          qty: -Math.abs(item.qty),   // ★ 음수 → 매출 차감
+          price: item.price,
+          total: -(item.price * Math.abs(item.qty)),  // ★ 음수
+          fee: 0,
+          orderDate: order.orderDate || now.slice(0,10),
+          dueDate: order.orderDate || now.slice(0,10),
+          status: 'done',            // ★ 수금관리에서 숨기기 위해 done 처리
+          isReturn: true,            // ★ 반품 플래그 (수금관리 필터용)
+          memo: '[KY반품자동] ' + (note||''),
+          relKyOrder: order.id,
+          createdAt: now
+        });
+      }
+    }
+
+    await fb.set(fb.ref(fb.db, 'amt_data/invLogs'), invLogs);
+    await fb.set(fb.ref(fb.db, 'amt_data/orders'), amtOrders);
+    await fb.set(fb.ref(fb.db, 'amt_data/_updatedAt'), now);
+    toast('✅ 반품 입고 완료 — KY재고 입고 + 매출 차감!', 'success');
+  }catch(e){
+    console.error('반품 자동업데이트 실패:', e);
+    console.warn('Firebase는 저장 완료:', e.message);
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   ★ 교환 처리: 재고·매출 변동없음, 수금관리 미등록
+═══════════════════════════════════════════════ */
+async function autoUpdateAmtOnExchange(order, note, now){
+  const fb = window._fb;
+  if(!fb||!fb.ready) return;
+  try{
+    // 교환은 재고, 매출, 수금관리 모두 변동 없음
+    // Firebase 상태만 'shipped'로 업데이트 (이미 confirmAction에서 완료)
+    toast('✅ 교환 처리 완료 (재고·매출 변동없음)', 'success');
+  }catch(e){
+    console.warn('교환 처리 오류:', e.message);
+  }
+}
+
+
 function closeDetail(){
   document.getElementById('detailModal').classList.remove('open');
   document.body.style.overflow = '';
@@ -999,7 +1096,7 @@ async function doAdminLogin(){
     try{ Object.assign(localPw, JSON.parse(localStorage.getItem('amt_pw')||'{}')); }catch(e){}
     const matched = Object.entries(localPw).find(([k,v]) => v === code);
     if(matched){
-      setAdminSession(matched[0], code);
+      setAdminSession(matched[0]);
       showAdminApp();
       return;
     }
@@ -1014,21 +1111,17 @@ async function doAdminLogin(){
     // pwData: { "홍길동": "1234", "김철수": "5678", ... }
     const matched = Object.entries(pwData).find(([name, pw]) => String(pw) === String(code));
     if(!matched){ setAdminMsg('❌ 코드가 틀렸습니다.'); return; }
-    setAdminSession(matched[0], code);
+    setAdminSession(matched[0]);
     showAdminApp();
   }catch(e){
     setAdminMsg('❌ 오류: '+e.message);
   }
 }
 
-function setAdminSession(name, code){
+function setAdminSession(name){
   sessionStorage.setItem(ADMIN_SESSION_KEY, name);
   window._adminName = name;
-  // ★ 자동 로그인: localStorage에 코드 저장 (다음 접속 시 자동 입력)
-  if(code) {
-    localStorage.setItem('ky_admin_saved_code', code);
-    localStorage.setItem('ky_admin_saved_name', name);
-  }
+  // 헤더에 이름 표시
   const badge = document.getElementById('adminNameBadge');
   if(badge) badge.textContent = '👤 '+name;
 }
@@ -1045,9 +1138,7 @@ function adminLogout(){
   window._adminName = null;
   document.getElementById('adminMainApp').style.display = 'none';
   document.getElementById('adminLoginScreen').style.display = 'flex';
-  // ★ 로그아웃 후 자동 코드 유지
-  const savedCode = localStorage.getItem('ky_admin_saved_code') || '';
-  document.getElementById('adminCodeInput').value = savedCode;
+  document.getElementById('adminCodeInput').value = '';
   setAdminMsg('');
 }
 
@@ -1156,26 +1247,15 @@ async function saveDealerCode(idx, dealerId){
   const newCode = (document.getElementById('dcode_'+idx).value||'').trim();
   if(!newCode){ alert('코드를 입력하세요'); return; }
 
-  try{
-    // ★ 전체 amt_data를 읽어서 code만 업데이트 후 전체 저장
-    // (부분 저장하면 AMT 앱의 fbSaveAll이 덮어쓰는 문제 방지)
-    const snap = await fb.get(fb.ref(fb.db,'amt_data'));
-    if(!snap.exists()){ alert('데이터 없음'); return; }
-    const data = snap.val();
-    const dealers = data.dealers||[];
-    const di = dealers.findIndex(d=>d.id===dealerId);
-    if(di<0){ alert('대리점을 찾을 수 없습니다'); return; }
-    dealers[di].code = newCode;
-    // ★ 전체 amt_data를 _updatedAt 갱신과 함께 저장
-    data.dealers = dealers;
-    data._updatedAt = new Date().toISOString();
-    await fb.set(fb.ref(fb.db,'amt_data'), data);
-    toast('✅ '+dealers[di].name+' 코드 → '+newCode,'success');
-    // UI 새로고침
-    loadDealerCodes();
-  }catch(e){
-    alert('저장 실패: '+e.message);
-  }
+  const snap = await fb.get(fb.ref(fb.db,'amt_data'));
+  if(!snap.exists()){ alert('데이터 없음'); return; }
+  const data = snap.val();
+  const dealers = data.dealers||[];
+  const di = dealers.findIndex(d=>d.id===dealerId);
+  if(di<0){ alert('대리점을 찾을 수 없습니다'); return; }
+  dealers[di].code = newCode;
+  await fb.set(fb.ref(fb.db,'amt_data/dealers'), dealers);
+  toast('✅ '+dealers[di].name+' 코드 → '+newCode,'success');
 }
 
 // ── 코드 모를 때 승인 요청 메일 ──
@@ -1198,61 +1278,6 @@ function toggleAdminSettings(){
   p.style.display=p.style.display==='none'?'block':'none';
 }
 
-/* ═══ 신규 주문 팝업 알림창 (확인 버튼 전까지 유지) ═══ */
-function showNewOrderPopup(order){
-  const existing = document.getElementById('newOrderPopup');
-  if(existing) existing.remove();
-
-  const popup = document.createElement('div');
-  popup.id = 'newOrderPopup';
-  popup.style.cssText = [
-    'position:fixed','bottom:24px','right:20px','z-index:9999',
-    'background:#fff','border:2.5px solid var(--ky)','border-radius:16px',
-    'padding:18px 20px','min-width:270px','max-width:340px',
-    'box-shadow:0 8px 36px rgba(217,119,6,.35)'
-  ].join(';');
-
-  const itemsText = (order.items||[]).map(i => i.product + ' ' + fmt(i.qty) + '개').join(' · ');
-  const typeTag = order.orderType && order.orderType !== 'order'
-    ? `<span style="margin-left:6px;font-size:.62rem;padding:2px 7px;border-radius:10px;font-weight:700;background:${order.orderType==='return'?'#fef3c7':'#eff6ff'};color:${order.orderType==='return'?'#92400e':'#1e40af'}">${order.orderType==='return'?'반품':'교환'}</span>` : '';
-  const now = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
-
-  popup.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <span style="font-size:1.5rem">🔔</span>
-      <div style="flex:1">
-        <div style="font-weight:800;font-size:.95rem;color:var(--ky)">새 주문 접수!</div>
-        <div style="font-size:.72rem;color:#6b7280">${now}</div>
-      </div>
-    </div>
-    <div style="font-weight:700;font-size:.98rem;margin-bottom:3px">${order.dealerName}${typeTag}</div>
-    <div style="font-size:.82rem;color:#374151;margin-bottom:12px">${itemsText}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <span style="font-family:monospace;font-size:1.05rem;font-weight:800;color:var(--ky)">${fmt(order.total)}원</span>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <button onclick="document.getElementById('newOrderPopup').remove()"
-        style="padding:9px;border-radius:8px;border:1.5px solid #d1d5db;background:#fff;cursor:pointer;font-size:.85rem;font-weight:600">
-        닫기
-      </button>
-      <button onclick="document.getElementById('newOrderPopup').remove(); filterByDealer('${order.dealerName}');"
-        style="padding:9px;border-radius:8px;border:none;background:var(--ky);color:#fff;cursor:pointer;font-size:.85rem;font-weight:700">
-        ✅ 확인
-      </button>
-    </div>
-  `;
-  document.body.appendChild(popup);
-  // ★ 자동 닫힘 없음 - 확인/닫기 버튼으로만 닫힘
-}
-
-function filterByDealer(name){
-  const sel = document.getElementById('fDealer');
-  if(sel){
-    sel.value = name;
-    applyFilter();
-  }
-}
-
 window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
@@ -1265,13 +1290,6 @@ window.addEventListener('DOMContentLoaded', () => {
   if(saved){
     setAdminSession(saved);
     showAdminApp();
-  } else {
-    // ★ 자동 코드 입력: 이전 로그인 코드가 있으면 자동 채움
-    const savedCode = localStorage.getItem('ky_admin_saved_code') || '';
-    if(savedCode){
-      const inp = document.getElementById('adminCodeInput');
-      if(inp) inp.value = savedCode;
-    }
   }
 });
 </script>
