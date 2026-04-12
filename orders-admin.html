@@ -408,7 +408,13 @@ textarea.note-input:focus{border-color:var(--ky);}
       <option value="pending">대기중</option>
       <option value="accepted">접수완료</option>
       <option value="shipped">출고완료</option>
-      <option value="received">반품입고완료</option>
+      <option value="received">입고완료(반품)</option>
+    </select>
+    <select id="fOrderType" onchange="applyFilter()">
+      <option value="">전체 유형</option>
+      <option value="order">일반주문</option>
+      <option value="return">반품</option>
+      <option value="exchange">교환</option>
     </select>
     <select id="fDealer" onchange="applyFilter()">
       <option value="">전체 대리점</option>
@@ -536,21 +542,6 @@ function startListener(){
           const msg = `🔔 새 주문: ${o.dealerName} — ${(o.items||[]).map(i=>i.product+'×'+i.qty).join(', ')} | ${fmt(o.total)}원`;
           toast(msg, 'info');
 
-          // ★ 11번: 텔레그램 알림 (총관리자 — 새 주문)
-          try{
-            const typeLabel = {order:'일반주문',return:'반품',exchange:'교환'}[o.orderType]||'주문';
-            const tNow = new Date().toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-            const tgLines = [
-              '📦 <b>새 '+typeLabel+' 접수!</b>',
-              '🏢 대리점: <b>'+o.dealerName+'</b>',
-              '📦 상품: '+(o.items||[]).map(i=>i.product+'×'+i.qty).join(', '),
-              '💰 합계: <b>'+fmt(o.total)+'원</b>',
-              o.memo ? '📝 메모: '+o.memo : '',
-              '🕐 '+tNow
-            ].filter(Boolean).join('\n');
-            sendTelegramAdmin(ADMIN_SUPER_CHAT_ID, tgLines).catch(()=>{});
-          }catch(_){}
-
           // ★ 브라우저 푸시 알림 (모든 기기)
           if(Notification && Notification.permission === 'granted'){
             new Notification('📦 KY 새 주문!', {
@@ -619,16 +610,18 @@ function updateDealerFilter(){
 }
 
 function applyFilter(){
-  const status = document.getElementById('fStatus').value;
-  const dealer = document.getElementById('fDealer').value;
-  const from = document.getElementById('fFrom').value;
-  const to = document.getElementById('fTo').value;
+  const status    = document.getElementById('fStatus').value;
+  const orderType = document.getElementById('fOrderType').value;
+  const dealer    = document.getElementById('fDealer').value;
+  const from      = document.getElementById('fFrom').value;
+  const to        = document.getElementById('fTo').value;
 
   let list = [...allOrders];
-  if(status) list = list.filter(o => o.status === status);
-  if(dealer) list = list.filter(o => o.dealerName === dealer);
-  if(from) list = list.filter(o => o.orderDate >= from);
-  if(to) list = list.filter(o => o.orderDate <= to);
+  if(status)    list = list.filter(o => o.status === status);
+  if(orderType) list = list.filter(o => (o.orderType||'order') === orderType);
+  if(dealer)    list = list.filter(o => o.dealerName === dealer);
+  if(from)      list = list.filter(o => o.orderDate >= from);
+  if(to)        list = list.filter(o => o.orderDate <= to);
 
   filteredOrders = list;
   renderOrders(list);
@@ -636,24 +629,33 @@ function applyFilter(){
 }
 
 function resetFilter(){
-  document.getElementById('fStatus').value = '';
-  document.getElementById('fDealer').value = '';
-  document.getElementById('fFrom').value = '';
-  document.getElementById('fTo').value = '';
+  ['fStatus','fOrderType','fDealer','fFrom','fTo'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
   applyFilter();
 }
+
+
 
 /* ═══════════════════════════════════════════════
    RENDER ORDERS
 ═══════════════════════════════════════════════ */
 function updateKpi(list){
   const mo = ym(today());
-  // ★ 취소 제외
   const active = list.filter(o => o.status !== 'cancelled');
   document.getElementById('kpiTotal').textContent = fmt(active.length);
   document.getElementById('kpiPending').textContent = fmt(active.filter(o=>o.status==='pending').length);
-  document.getElementById('kpiAccepted').textContent = fmt(active.filter(o=>o.status==='accepted').length);
-  const moAmt = active.filter(o=>o.orderDate.startsWith(mo)).reduce((s,o)=>s+o.total,0);
+  document.getElementById('kpiAccepted').textContent = fmt(
+    active.filter(o=>o.status==='accepted'||o.status==='received').length
+  );
+  // 교환은 매출 변화 없음, 반품 입고처리는 차감
+  const moAmt = active
+    .filter(o => o.orderDate && o.orderDate.startsWith(mo))
+    .reduce((s,o) => {
+      if(o.orderType === 'exchange') return s;           // 교환: 매출 0
+      if(o.orderType === 'return' && (o.status==='received'||o.status==='shipped')) return s - (o.total||0); // 반품: 차감
+      return s + (o.total||0);
+    }, 0);
   document.getElementById('kpiAmt').textContent = fmt(moAmt);
 }
 
@@ -661,7 +663,7 @@ const statusMap = {
   pending:  {label:'대기중',    cls:'badge-pending'},
   accepted: {label:'접수완료',  cls:'badge-accepted'},
   shipped:  {label:'출고완료',  cls:'badge-shipped'},
-  received: {label:'반품입고완료', cls:'badge-accepted'},
+  received: {label:'입고완료',  cls:'badge-accepted'},   // 반품 입고처리
   cancelled:{label:'취소됨',   cls:'badge-pending'}
 };
 
@@ -697,21 +699,17 @@ function renderOrders(list){
       ${o.statusNote ? `<div class="order-memo" style="border-color:var(--ky)">📝 ${o.statusNote}${o.processedBy?' · <b>'+o.processedBy+'</b>':''}</div>` : ''}
       <div class="order-actions">
         ${o.status === 'pending' ? `
-          <button class="btn btn-success" style="font-size:.88rem;padding:9px 20px;font-weight:700" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
-          ${o.orderType==='return'
-            ? `<button class="btn btn-outline" style="font-size:.88rem;padding:9px 20px;font-weight:700;color:#7c3aed;border-color:#7c3aed" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
-            : `<button class="btn btn-outline" style="font-size:.88rem;padding:9px 20px;font-weight:700" onclick="openAction('${o.id}','shipped')">🚚 출고처리</button>`
-          }
+          <button style="min-width:72px;padding:8px 14px;font-size:.82rem" class="btn btn-success" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
+          <button style="min-width:88px;padding:8px 14px;font-size:.82rem" class="btn ${o.orderType==='return'?'btn-ky':'btn-outline'}" onclick="openAction('${o.id}','${o.orderType==='return'?'received':'shipped'}')">
+            ${o.orderType==='return'?'📦 입고처리':'🚚 출고처리'}
+          </button>
         ` : o.status === 'accepted' ? `
-          ${o.orderType==='return'
-            ? `<button class="btn btn-outline" style="font-size:.88rem;padding:9px 20px;font-weight:700;color:#7c3aed;border-color:#7c3aed" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
-            : `<button class="btn btn-outline" style="font-size:.88rem;padding:9px 20px;font-weight:700" onclick="openAction('${o.id}','shipped')">🚚 출고처리</button>`
-          }
-          <button class="btn btn-ghost" style="font-size:.82rem;padding:8px 14px" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
-        ` : o.status === 'shipped' ? `
-          <button class="btn btn-ghost" style="font-size:.82rem;padding:8px 14px" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>
-        ` : o.status === 'received' ? `
-          <button class="btn btn-ghost" style="font-size:.82rem;padding:8px 14px" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>
+          <button style="min-width:88px;padding:8px 14px;font-size:.82rem" class="btn ${o.orderType==='return'?'btn-ky':'btn-outline'}" onclick="openAction('${o.id}','${o.orderType==='return'?'received':'shipped'}')">
+            ${o.orderType==='return'?'📦 입고처리':'🚚 출고처리'}
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
+        ` : o.status === 'shipped' || o.status === 'received' ? `
+          <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>
         ` : ''}
         <div class="order-total-chip">${fmt(o.total)}원</div>
       </div>
@@ -729,15 +727,13 @@ function openAction(orderId, targetStatus){
 
   const statusLabels = {
     accepted: '접수 완료 처리',
-    shipped:  '출고 완료 처리',
-    pending:  '대기중으로 되돌리기',
-    received: '반품 입고 처리'
+    shipped: '출고 완료 처리',
+    pending: '대기중으로 되돌리기'
   };
   const statusColors = {
     accepted: 'var(--green)',
-    shipped:  'var(--blue)',
-    pending:  'var(--gray)',
-    received: '#7c3aed'
+    shipped: 'var(--blue)',
+    pending: 'var(--gray)'
   };
 
   const itemRows = (o.items||[]).map(i=>
@@ -758,18 +754,23 @@ function openAction(orderId, targetStatus){
     </div>
   `;
 
-  // ★ 출고/반품 시 AMT 자동 업데이트 안내
-  const shippedNote = targetStatus === 'shipped'
-    ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#1e40af">
-        🚚 출고 처리 시 자동 실행:<br>
-        ① KY 재고 차감 ② AMT 발주 등록 ③ 수금관리 등록
-       </div>`
+  // ★ 처리 유형별 안내
+  const orderType = o.orderType || 'order';
+  const shippedNote =
+    targetStatus === 'shipped' && orderType === 'exchange'
+      ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#065f46">
+          🔁 교환 출고처리: <b>재고/매출/수금 변동 없음</b> (상태만 변경)
+         </div>`
+    : targetStatus === 'shipped'
+      ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#1e40af">
+          🚚 출고 처리 시 자동 실행:<br>
+          ① KY 재고 차감 &nbsp; ② AMT 발주 등록 &nbsp; ③ 수금관리 등록
+         </div>`
     : targetStatus === 'received'
-    ? `<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#5b21b6">
-        📥 반품 입고 처리 시 자동 실행:<br>
-        ① KY 재고 <b>증가</b> (입고수량 +) ② AMT 매출 <b>마이너스</b> 등록<br>
-        ⚠️ 수금관리에는 표시되지 않습니다
-       </div>`
+      ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#92400e">
+          📦 반품 입고처리 시 자동 실행:<br>
+          ① KY 재고 복구(+) &nbsp; ② 발주 마이너스 등록 &nbsp; ③ 수금관리 <b>미표시</b>
+         </div>`
     : '';
 
   document.getElementById('actionArea').innerHTML = `
@@ -813,18 +814,22 @@ async function confirmAction(orderId, targetStatus){
     };
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), updated);
 
-    // ★ 출고 처리 시 AMT amt_data 자동 업데이트
+    // ★ 처리 유형별 AMT 자동 업데이트
     if(targetStatus === 'shipped'){
-      await autoUpdateAmtOnShipped(o, note, now);
+      if((o.orderType||'order') === 'exchange'){
+        // 교환: 재고/매출/수금 변동 없음 — 상태 변경만
+        toast('🔁 교환 출고처리 완료 (재고·매출 변동 없음)', 'success');
+      } else {
+        await autoUpdateAmtOnShipped(o, note, now);
+      }
     }
-
-    // ★ 반품 입고 처리: 재고증가 + 매출마이너스 (수금 제외)
     if(targetStatus === 'received'){
+      // 반품: KY 재고 복구 + 발주 마이너스 (수금 미표시)
       await autoUpdateAmtOnReceived(o, note, now);
     }
 
     // ★ 전체 사용자 푸시 알림 (amt_notifications에 저장 → AMT 앱에서 감지)
-    const statusLabel = {accepted:'접수완료',shipped:'출고완료',pending:'대기중',received:'반품입고완료'};
+    const statusLabel = {accepted:'접수완료',shipped:'출고완료',pending:'대기중'};
     const notifMsg = `[KY주문] ${o.dealerName} → ${statusLabel[targetStatus]||targetStatus} | ${(o.items||[]).map(i=>i.product+'×'+i.qty).join(', ')} | ${fmt(o.total)}원`;
     await fb.set(fb.ref(fb.db, 'amt_notifications/ky_' + orderId + '_' + targetStatus), {
       type: 'ky_order',
@@ -909,11 +914,6 @@ async function sendTelegramStatus(order, targetStatus, note, nowIso){
    - 수금관리(orders) 연동
 ═══════════════════════════════════════════════ */
 async function autoUpdateAmtOnShipped(order, note, now){
-  // ★ 5번: 교환 주문은 재고/매출/수금 변화 없음
-  if(order.orderType === 'exchange'){
-    toast('✅ 교환 출고처리 완료 (재고·매출 변동 없음)', 'success');
-    return;
-  }
   const fb = window._fb;
   if(!fb||!fb.ready) return;
 
@@ -933,7 +933,7 @@ async function autoUpdateAmtOnShipped(order, note, now){
     for(const item of (order.items||[])){
       const invId = 'inv_ky_ship_' + order.id + '_' + item.product.replace(/\s/g,'_');
       // 중복 방지: 이미 처리된 경우 스킵
-      if(invLogs.some(i => i.id === invId)) continue;
+      if((invLogs||[]).some(i => i.id === invId)) continue;
       invLogs.push({
         id: invId,
         date: order.orderDate || now.slice(0,10),
@@ -949,7 +949,7 @@ async function autoUpdateAmtOnShipped(order, note, now){
 
     // ② AMT 발주(orders) + 수금관리 자동 등록
     // 이미 처리된 주문인지 확인
-    const alreadyExists = amtOrders.some(o => o.relKyOrder === order.id);
+    const alreadyExists = (amtOrders||[]).some(o => o.relKyOrder === order.id);
     if(!alreadyExists && dealer){
       for(const item of (order.items||[])){
         const dp = (dealer.products||[]).find(p => p.product === item.product);
@@ -986,75 +986,75 @@ async function autoUpdateAmtOnShipped(order, note, now){
     toast('✅ 출고 완료 — KY재고 차감 + AMT 발주/수금 자동 등록!', 'success');
   } catch(e){
     console.error('AMT 자동 업데이트 실패:', e);
-    // 6번: undefined/렌더링 오류와 실제 실패 구분
-    if(e.message && (e.message.includes('Cannot read') || e.message.includes('undefined'))){
-      console.warn('로컬 렌더링 오류 (Firebase 저장 성공):', e.message);
-    } else {
-      toast('⚠️ 자동업데이트 실패: ' + e.message, 'error');
-    }
+    toast('⚠️ 출고는 됐으나 AMT 자동업데이트 실패: ' + e.message, 'error');
   }
 }
 
-// ★ 4번: 반품 입고 처리 - 재고증가 + 매출마이너스 (수금 제외)
+// ★ 반품 입고처리: KY 재고 복구 + 발주 마이너스 등록 (수금 미표시)
 async function autoUpdateAmtOnReceived(order, note, now){
   const fb = window._fb;
   if(!fb||!fb.ready) return;
   try{
     const snap = await fb.get(fb.ref(fb.db, 'amt_data'));
-    if(!snap.exists()){ toast('⚠️ AMT 데이터 없음 - 반품 자동 업데이트 실패','error'); return; }
+    if(!snap.exists()){ toast('⚠️ AMT 데이터 없음 - 자동 업데이트 실패','error'); return; }
     const data = snap.val();
-    const invLogs = data.invLogs || [];
-    const amtOrders = data.orders || [];
+    const invLogs   = data.invLogs   || [];
+    const amtOrders = data.orders    || [];
+    const dealers   = data.dealers   || [];
+    const dealer    = dealers.find(d => d.id === order.dealerId || d.name === order.dealerName);
 
-    // ① KY 재고 증가 (반품 입고 +)
+    // ① KY 재고 입고 (반품 복구 — 양수)
     for(const item of (order.items||[])){
       const invId = 'inv_ky_recv_' + order.id + '_' + item.product.replace(/\s/g,'_');
-      if(invLogs.some(i => i.id === invId)) continue;
+      if((invLogs||[]).some(i => i.id === invId)) continue;
       invLogs.push({
         id: invId,
         date: order.orderDate || now.slice(0,10),
         product: item.product,
-        qty: +Math.abs(item.qty),
+        qty: Math.abs(item.qty),   // 입고(양수)
         type: 'in',
         company: 'KY',
-        memo: '[KY반품입고] ' + order.dealerName + ' #' + order.id,
+        memo: `[반품입고] ${order.dealerName} #${order.id}`,
         relKyOrder: order.id,
         createdAt: now
       });
     }
 
-    // ② AMT 발주에 마이너스 등록 (수금 제외 플래그)
-    const alreadyExists = amtOrders.some(o => o.relKyOrder === order.id && o.isReturn);
-    if(!alreadyExists){
+    // ② 발주 마이너스 등록 (returnOrder:true → 수금관리 제외)
+    const alreadyRet = (amtOrders||[]).some(o => o.relKyOrder === order.id && o.orderType==='return');
+    if(!alreadyRet && dealer){
       for(const item of (order.items||[])){
+        const dp    = (dealer.products||[]).find(p => p.product === item.product);
+        const price = dp ? dp.price : item.price;
         amtOrders.push({
           id: 'ord_ky_ret_' + order.id + '_' + item.product.replace(/\s/g,'_'),
-          dealerId: order.dealerId,
+          dealerId:   order.dealerId,
           dealerName: order.dealerName,
-          product: item.product,
-          qty: -Math.abs(item.qty),
-          price: item.price || 0,
-          total: -(Math.abs(item.price||0) * Math.abs(item.qty)),
-          fee: 0,
-          orderDate: order.orderDate || now.slice(0,10),
-          dueDate: order.orderDate || now.slice(0,10),
-          status: 'return',
-          isReturn: true,
-          skipCollection: true,
-          memo: '[KY반품자동] ' + (note||''),
+          product:    item.product,
+          qty:        -Math.abs(item.qty),
+          price,
+          total:      -(price * Math.abs(item.qty)),
+          fee:        0,
+          orderDate:  order.orderDate || now.slice(0,10),
+          dueDate:    order.orderDate || now.slice(0,10),
+          status:     'done',       // 수금완료 처리 → 수금관리 목록 미표시 (returnOrder로 추가 제외)
+          returnOrder: true,        // ★ 수금관리 화면 제외 플래그
+          orderType:  'return',
+          memo:       `[반품] ${note||''}`,
           relKyOrder: order.id,
-          createdAt: now
+          createdAt:  now
         });
       }
     }
 
-    await fb.set(fb.ref(fb.db, 'amt_data/invLogs'), invLogs);
-    await fb.set(fb.ref(fb.db, 'amt_data/orders'), amtOrders);
-    await fb.set(fb.ref(fb.db, 'amt_data/_updatedAt'), now);
-    toast('✅ 반품 입고 완료 — 재고 증가 + 매출 차감 자동 등록', 'success');
-  }catch(e){
+    await fb.set(fb.ref(fb.db,'amt_data/invLogs'),  invLogs);
+    await fb.set(fb.ref(fb.db,'amt_data/orders'),   amtOrders);
+    await fb.set(fb.ref(fb.db,'amt_data/_updatedAt'), now);
+
+    toast('✅ 반품 입고처리 완료 — KY 재고 복구 + 발주 마이너스 등록!', 'success');
+  } catch(e){
     console.error('반품 자동 업데이트 실패:', e);
-    toast('⚠️ 반품 자동업데이트 실패: ' + e.message, 'error');
+    toast('⚠️ 입고됐으나 AMT 자동업데이트 실패: ' + e.message, 'error');
   }
 }
 
@@ -1097,11 +1097,6 @@ function closeDetail(){
    관리자 로그인 시스템
 ═══════════════════════════════════════════ */
 const ADMIN_SESSION_KEY = 'ky_admin_session';
-const SUPER_ADMIN_CODE = '9350';  // ★ 총관리자 코드
-
-function isSuperAdmin(){
-  return window._adminName === '유경호';
-}
 
 async function doAdminLogin(){
   const code = (document.getElementById('adminCodeInput').value||'').trim();
@@ -1129,17 +1124,17 @@ async function doAdminLogin(){
     // pwData: { "홍길동": "1234", "김철수": "5678", ... }
     const matched = Object.entries(pwData).find(([name, pw]) => String(pw) === String(code));
     if(!matched){ setAdminMsg('❌ 코드가 틀렸습니다.'); return; }
-    setAdminSession(matched[0]);
+    setAdminSession(matched[0], code);
     showAdminApp();
   }catch(e){
     setAdminMsg('❌ 오류: '+e.message);
   }
 }
 
-function setAdminSession(name){
+function setAdminSession(name, code){
   sessionStorage.setItem(ADMIN_SESSION_KEY, name);
+  sessionStorage.setItem('ky_admin_code', code || '');
   window._adminName = name;
-  // 헤더에 이름 표시
   const badge = document.getElementById('adminNameBadge');
   if(badge) badge.textContent = '👤 '+name;
 }
@@ -1153,6 +1148,7 @@ function showAdminApp(){
 function adminLogout(){
   if(!confirm('로그아웃 하시겠습니까?')) return;
   sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  sessionStorage.removeItem('ky_admin_code');
   window._adminName = null;
   document.getElementById('adminMainApp').style.display = 'none';
   document.getElementById('adminLoginScreen').style.display = 'flex';
@@ -1176,6 +1172,9 @@ async function loadAdminCodes(){
   renderAdminCodeList(data);
 }
 
+const SUPER_ADMIN_CODE = '9350';
+function isSuperAdmin(){ return sessionStorage.getItem('ky_admin_code') === SUPER_ADMIN_CODE; }
+
 function renderAdminCodeList(data){
   const wrap = document.getElementById('adminCodeListWrap');
   if(!wrap) return;
@@ -1184,15 +1183,18 @@ function renderAdminCodeList(data){
     wrap.innerHTML = '<div style="font-size:.8rem;color:#888;padding:8px">등록된 관리자가 없습니다.</div>';
     return;
   }
-  wrap.innerHTML = entries.map(([name, code]) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+  const isSA = isSuperAdmin();
+  wrap.innerHTML = entries.map(([name, code]) => {
+    const canEdit = isSA || name === window._adminName;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
       <span style="flex:1;font-weight:700;font-size:.88rem">${name}</span>
-      <input type="text" id="acode_${name}" value="${code}"
-        style="width:90px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:monospace;font-size:.9rem;font-weight:700;text-align:center">
-      <button class="btn btn-primary btn-xs" onclick="saveOneAdminCode('${name}')">저장</button>
-      <button class="btn btn-danger btn-xs" onclick="deleteAdminCode('${name}')">삭제</button>
-    </div>
-  `).join('');
+      <input type="${canEdit ? 'text' : 'password'}" id="acode_${name}" value="${code}"
+        style="width:90px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:monospace;font-size:.9rem;font-weight:700;text-align:center"
+        ${!canEdit ? 'readonly' : ''}>
+      ${canEdit ? `<button class="btn btn-ky btn-xs" onclick="saveOneAdminCode('${name}')">저장</button>` : ''}
+      ${isSA   ? `<button class="btn btn-danger btn-xs" onclick="deleteAdminCode('${name}')">삭제</button>` : ''}
+    </div>`;
+  }).join('');
 }
 
 async function saveOneAdminCode(name){
@@ -1272,11 +1274,8 @@ async function saveDealerCode(idx, dealerId){
   const di = dealers.findIndex(d=>d.id===dealerId);
   if(di<0){ alert('대리점을 찾을 수 없습니다'); return; }
   dealers[di].code = newCode;
-  // ★ 10번: Firebase 저장 후 메모리도 동기화
   await fb.set(fb.ref(fb.db,'amt_data/dealers'), dealers);
-  toast('✅ '+dealers[di].name+' 코드 → '+newCode+' (저장완료)','success');
-  // 목록 새로고침
-  loadDealerCodes();
+  toast('✅ '+dealers[di].name+' 코드 → '+newCode,'success');
 }
 
 // ── 코드 모를 때 승인 요청 메일 ──
@@ -1307,9 +1306,10 @@ window.addEventListener('DOMContentLoaded', () => {
       .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
   }
   // 세션 복원 시도
-  const saved = sessionStorage.getItem(ADMIN_SESSION_KEY);
+  const saved     = sessionStorage.getItem(ADMIN_SESSION_KEY);
+  const savedCode = sessionStorage.getItem('ky_admin_code') || '';
   if(saved){
-    setAdminSession(saved);
+    setAdminSession(saved, savedCode);
     showAdminApp();
   }
 });

@@ -747,7 +747,7 @@ textarea.memo-input{
 <div id="loginScreen">
   <div class="login-logo">KY</div>
   <div class="login-title">KY 주문 시스템</div>
-  <div class="login-sub">대리점 코드 또는 대리점 이름을 입력하세요</div>
+  <div class="login-sub">대리점 코드 또는 대리점 이름을 입력하세요<br><span style="font-size:.78rem;color:var(--text3)">코드를 모르시면 아래 알림 요청을 이용하세요</span></div>
 
   <div class="login-card">
     <label class="login-label">대리점 코드 또는 대리점 이름</label>
@@ -760,17 +760,18 @@ textarea.memo-input{
     <div class="login-msg" id="loginMsg"></div>
 
     <!-- ★ 8번: 코드 모를 때 관리자 알림 -->
-    <div style="margin-top:18px;border-top:1px solid #fde68a;padding-top:14px">
-      <div style="font-size:.75rem;color:#92400e;font-weight:600;margin-bottom:8px">📋 코드를 모르시나요?</div>
-      <div style="display:flex;gap:8px">
-        <input type="text" id="codeRequestName" placeholder="대리점 이름 입력"
-          style="flex:1;padding:9px 12px;border:1.5px solid #fde68a;border-radius:8px;font-size:.85rem;outline:none;background:#fffbeb">
-        <button onclick="requestDealerCode()"
-          style="padding:9px 14px;background:#d97706;color:#fff;border:none;border-radius:8px;font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap">
-          📨 알림보내기
-        </button>
-      </div>
-      <div id="codeRequestMsg" style="font-size:.72rem;margin-top:6px;color:#059669;min-height:16px"></div>
+    <div style="margin-top:16px;padding:14px;background:var(--ky-light);border:1px solid var(--border);border-radius:var(--radius-sm)">
+      <div style="font-size:.78rem;font-weight:700;color:var(--ky-dark);margin-bottom:8px">📱 코드를 모르시나요?</div>
+      <div style="font-size:.74rem;color:var(--text2);margin-bottom:8px">대리점 이름과 연락처를 입력하면 관리자에게 알림이 전송됩니다.</div>
+      <input type="text" id="unknownDealerName" placeholder="대리점 이름"
+        style="margin-bottom:6px;font-size:.85rem;padding:9px 12px;letter-spacing:0">
+      <input type="text" id="unknownDealerContact" placeholder="연락처 (전화번호 등)"
+        style="margin-bottom:8px;font-size:.85rem;padding:9px 12px;letter-spacing:0">
+      <button onclick="requestDealerCode()"
+        style="width:100%;padding:9px;border-radius:var(--radius-sm);border:1.5px solid var(--ky);background:var(--white);color:var(--ky);font-family:inherit;font-size:.82rem;font-weight:700;cursor:pointer">
+        📨 관리자에게 코드 요청
+      </button>
+      <div id="codeRequestMsg" style="font-size:.75rem;text-align:center;margin-top:6px;min-height:16px;color:var(--green)"></div>
     </div>
 
     <button class="setup-toggle" onclick="toggleFirebaseSetup()">
@@ -1196,10 +1197,13 @@ async function doLogin(){
     }
 
     currentDealer = dealer;
-    // 코드 영구 저장 (로그인 유지 + 다음번 자동채우기용)
+    // ★ 10번: 코드 영구 저장 + Firebase에서 가져온 최신 dealer 정보로 갱신
     const savedCode = dealer.code || dealer.id;
+    // sessionStorage에도 저장 (탭 세션 유지)
     localStorage.setItem(LS_DEALER, JSON.stringify({ id: dealer.id, name: dealer.name, code: savedCode }));
     localStorage.setItem('ky_last_dealer_code', savedCode);
+    // amtData는 이미 Firebase에서 가져온 최신값이므로 따로 저장 불필요
+    // (자동로그인 시에도 Firebase에서 다시 가져오므로 코드 변경사항이 반영됨)
 
     hideLoading();
     enterApp();
@@ -1212,6 +1216,8 @@ async function doLogin(){
 function showLoginMsg(msg){ document.getElementById('loginMsg').textContent = msg; }
 
 async function tryAutoLogin(){
+  // ★ 10번 수정: 저장된 세션 복원 시 항상 Firebase에서 최신 dealers 가져오기
+  // localStorage의 대리점 코드는 UI 편의용만 사용, 실제 검증은 Firebase
   const saved = localStorage.getItem(LS_DEALER);
   if(!saved) return false;
 
@@ -1220,15 +1226,27 @@ async function tryAutoLogin(){
 
   try{
     const sess = JSON.parse(saved);
+    if(!sess.id) { localStorage.removeItem(LS_DEALER); return false; }
     showLoading();
+    // ★ 항상 Firebase에서 최신 데이터 fetch (캐시 사용 안 함)
     const snap = await fb.get(fb.ref(fb.db, 'amt_data'));
     if(!snap.exists()){ hideLoading(); return false; }
     amtData = snap.val();
 
+    // ★ Firebase의 dealers에서 id 매칭 (코드 변경 시에도 반영)
     const dealer = (amtData.dealers||[]).find(d => d.id === sess.id);
-    if(!dealer){ localStorage.removeItem(LS_DEALER); hideLoading(); return false; }
-
-    currentDealer = dealer;
+    if(!dealer){
+      // id로 못찾으면 저장된 코드로 재시도
+      const byCode = (amtData.dealers||[]).find(d =>
+        (d.code && d.code === sess.code) || (d.id === sess.code)
+      );
+      if(!byCode){ localStorage.removeItem(LS_DEALER); hideLoading(); return false; }
+      currentDealer = byCode;
+      // 세션 갱신
+      localStorage.setItem(LS_DEALER, JSON.stringify({id:byCode.id, name:byCode.name, code:byCode.code||byCode.id}));
+    } else {
+      currentDealer = dealer;
+    }
     hideLoading();
     return true;
   } catch(e){ hideLoading(); return false; }
@@ -1511,6 +1529,40 @@ function renderConfirm(){
 }
 
 /* ═══════════════════════════════════════════════════
+   ★ 8번: 대리점 코드 요청 (관리자에게 알림)
+═══════════════════════════════════════════════════ */
+async function requestDealerCode(){
+  const name = (document.getElementById('unknownDealerName').value||'').trim();
+  const contact = (document.getElementById('unknownDealerContact').value||'').trim();
+  const msg = document.getElementById('codeRequestMsg');
+
+  if(!name){ if(msg){msg.textContent='대리점 이름을 입력하세요';msg.style.color='var(--red)';}return; }
+
+  if(msg){ msg.textContent='전송 중...'; msg.style.color='var(--text2)'; }
+
+  // 텔레그램으로 관리자에게 알림
+  const now = new Date().toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const text = [
+    '🔑 <b>대리점 코드 요청</b>',
+    '',
+    '🏢 대리점명: <b>' + name + '</b>',
+    '📞 연락처: ' + (contact || '미입력'),
+    '🕐 요청시각: ' + now,
+    '',
+    '해당 대리점에 코드를 알려주세요.'
+  ].join('\n');
+
+  try{
+    await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, text);
+    if(msg){ msg.textContent='✅ 관리자에게 알림이 전송되었습니다!'; msg.style.color='var(--green)'; }
+    document.getElementById('unknownDealerName').value='';
+    document.getElementById('unknownDealerContact').value='';
+  }catch(e){
+    if(msg){ msg.textContent='⚠️ 전송 실패. 직접 연락하세요.'; msg.style.color='var(--red)'; }
+  }
+}
+
+/* ═══════════════════════════════════════════════════
    SUBMIT ORDER
 ═══════════════════════════════════════════════════ */
 async function submitOrder(){
@@ -1559,20 +1611,6 @@ async function submitOrder(){
 
     // 로컬 알림 기록 (제출 확인용)
     addLocalNotif('🚀 주문이 접수되었습니다', order.items.map(i=>i.product+'×'+i.qty).join(', '), orderId);
-
-    // ★ 11번: Firebase amt_notifications에 기록 → AMT 앱 실시간 팝업 트리거
-    try{
-      await fb.set(fb.ref(fb.db, 'amt_notifications/kyorder_'+orderId), {
-        type: 'ky_new_order',
-        message: '[KY새주문] '+order.dealerName+' — '+(order.items||[]).map(i=>i.product+'×'+i.qty).join(', ')+' | '+order.total+'원',
-        orderId: orderId,
-        dealerName: order.dealerName,
-        orderType: order.orderType || 'order',
-        total: order.total,
-        at: new Date().toISOString(),
-        read: false
-      });
-    }catch(notifErr){ console.warn('알림 기록 실패:', notifErr); }
 
     // ★ 텔레그램으로 주문 알림 발송 (총관리자, 비동기)
     sendTelegramOrder(order).catch(() => {});
@@ -1630,50 +1668,6 @@ async function sendTelegramKY(chatId, text){
 }
 
 /* 신규 주문 → 총관리자 텔레그램 */
-// ★ 8번: 코드를 모를 때 관리자에게 알림 보내기
-async function requestDealerCode(){
-  const name = (document.getElementById('codeRequestName').value||'').trim();
-  const msgEl = document.getElementById('codeRequestMsg');
-  if(!name){ msgEl.style.color='#dc2626'; msgEl.textContent='대리점 이름을 입력하세요.'; return; }
-
-  msgEl.style.color='#92400e'; msgEl.textContent='알림 전송 중...';
-
-  const now = new Date().toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-  const telegramText = `📋 <b>[코드 문의]</b>\n대리점: <b>${name}</b>\n시각: ${now}\n\n→ AMT 관리자 화면에서 대리점 코드를 확인 후 알려주세요.`;
-
-  let sent = false;
-
-  // 텔레그램 알림
-  try{
-    await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, telegramText);
-    sent = true;
-  }catch(e){ console.warn('텔레그램 발송 실패:', e); }
-
-  // Firebase에도 알림 기록
-  try{
-    const fb = window._fb;
-    if(fb && fb.ready){
-      await fb.set(fb.ref(fb.db, 'amt_notifications/code_req_'+Date.now()), {
-        type: 'code_request',
-        message: `[코드문의] ${name} 대리점이 코드를 문의했습니다.`,
-        dealerName: name,
-        at: new Date().toISOString(),
-        read: false
-      });
-      sent = true;
-    }
-  }catch(e){ console.warn('Firebase 알림 실패:', e); }
-
-  if(sent){
-    msgEl.style.color='#059669';
-    msgEl.textContent='✅ 관리자에게 알림을 보냈습니다. 잠시 후 연락 드립니다.';
-    document.getElementById('codeRequestName').value='';
-  } else {
-    msgEl.style.color='#dc2626';
-    msgEl.textContent='❌ 알림 전송 실패. 관리자에게 직접 연락하세요.';
-  }
-}
-
 async function sendTelegramOrder(order){
   const typeLabels = {order:'일반주문', return:'반품', exchange:'교환'};
   const now = new Date().toLocaleString('ko-KR', {
