@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>KY 주문시스템</title>
+<title>KY · 주문</title>
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
@@ -11,7 +11,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="KY 주문시스템">
+<meta name="apple-mobile-web-app-title" content="KY주문">
 <link rel="apple-touch-icon" href="icon-192.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -230,19 +230,13 @@ body{
   padding:24px;
 }
 .login-logo{
-  width:96px;height:96px;border-radius:24px;
+  width:80px;height:80px;border-radius:22px;
   background:var(--ky);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  box-shadow:0 8px 24px rgba(217,119,6,0.35);
-  margin-bottom:20px;gap:4px;
-}
-.login-logo-text-big{
+  display:flex;align-items:center;justify-content:center;
   font-family:'JetBrains Mono',monospace;
-  font-size:1.5rem;font-weight:900;color:#fff;letter-spacing:3px;line-height:1;
-}
-.login-logo-text-small{
-  font-size:.52rem;font-weight:700;color:rgba(255,255,255,0.9);
-  letter-spacing:.5px;line-height:1;text-align:center;
+  font-size:1.3rem;font-weight:700;color:#fff;letter-spacing:2px;
+  box-shadow:0 8px 24px rgba(217,119,6,0.35);
+  margin-bottom:20px;
 }
 .login-title{
   font-size:1.6rem;font-weight:900;color:var(--text);
@@ -751,10 +745,7 @@ textarea.memo-input{
 
 <!-- ─── LOGIN SCREEN ─── -->
 <div id="loginScreen">
-  <div class="login-logo">
-    <div class="login-logo-text-big">KY</div>
-    <div class="login-logo-text-small">주문시스템</div>
-  </div>
+  <div class="login-logo">KY</div>
   <div class="login-title">KY 주문 시스템</div>
   <div class="login-sub">대리점 코드 또는 대리점 이름을 입력하세요</div>
 
@@ -768,18 +759,16 @@ textarea.memo-input{
     <button class="login-btn" onclick="doLogin()">🔑 로그인</button>
     <div class="login-msg" id="loginMsg"></div>
 
-    <!-- ★ 코드 모를 때 관리자에게 알림 -->
-    <div style="margin-top:16px;padding:14px 16px;background:var(--ky-light);border:1.5px dashed var(--border2);border-radius:var(--radius-sm)">
-      <div style="font-size:.78rem;font-weight:700;color:var(--ky-dark);margin-bottom:8px">🔑 코드를 모르시나요?</div>
-      <input type="text" id="dealerNameForHelp" placeholder="대리점 이름 입력"
-        style="width:100%;background:#fff;border:1.5px solid var(--border);border-radius:6px;
-          padding:9px 12px;font-family:inherit;font-size:.88rem;margin-bottom:8px;outline:none">
-      <button onclick="requestDealerCode()"
-        style="width:100%;background:var(--ky-mid);color:var(--ky-dark);border:1.5px solid var(--border2);
-          border-radius:6px;padding:9px;font-family:inherit;font-size:.82rem;font-weight:700;cursor:pointer">
-        📨 관리자에게 코드 요청
+    <!-- 코드 분실 알림 -->
+    <div style="margin-top:14px;padding:12px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:10px">
+      <div style="font-size:.78rem;font-weight:700;color:#854d0e;margin-bottom:8px">🔑 코드를 모르시나요?</div>
+      <textarea id="codeReqMsg" placeholder="대리점 이름과 연락처를 입력하세요..."
+        style="width:100%;padding:8px 10px;border:1.5px solid #fde047;border-radius:6px;font-family:inherit;font-size:.8rem;min-height:60px;resize:none;outline:none;background:#fffbeb;margin-bottom:8px"></textarea>
+      <button onclick="sendCodeRequest()"
+        style="width:100%;background:#d97706;color:#fff;border:none;border-radius:6px;padding:9px;font-family:inherit;font-size:.82rem;font-weight:700;cursor:pointer">
+        📨 관리자에게 코드 요청 보내기
       </button>
-      <div id="helpRequestMsg" style="font-size:.75rem;color:var(--text2);margin-top:6px;min-height:16px;text-align:center"></div>
+      <div id="codeReqResult" style="font-size:.75rem;margin-top:6px;min-height:16px;text-align:center"></div>
     </div>
 
     <button class="setup-toggle" onclick="toggleFirebaseSetup()">
@@ -807,10 +796,7 @@ textarea.memo-input{
   <!-- HEADER -->
   <div class="header">
     <div class="logo">
-      <div class="logo-icon" style="flex-direction:column;gap:1px;width:38px;height:38px">
-        <span style="font-size:.65rem;font-weight:900;letter-spacing:1px;line-height:1">KY</span>
-        <span style="font-size:.38rem;font-weight:700;letter-spacing:.3px;line-height:1;opacity:.9">주문</span>
-      </div>
+      <div class="logo-icon">KY</div>
       <div>
         <div class="logo-text">주문 시스템</div>
         <div class="logo-sub" id="headerDealerName">로딩중...</div>
@@ -1171,38 +1157,48 @@ function saveFbSettingsMain(){
 /* ═══════════════════════════════════════════════════
    LOGIN / SESSION
 ═══════════════════════════════════════════════════ */
-/* ★ 대리점 코드 모를 때 관리자에게 알림 요청 */
-async function requestDealerCode(){
-  const name = (document.getElementById('dealerNameForHelp').value||'').trim();
-  const msg = document.getElementById('helpRequestMsg');
-  if(!name){ msg.textContent='대리점 이름을 입력하세요.'; msg.style.color='var(--red)'; return; }
+/* ═══ 코드 분실 알림 (관리자에게 텔레그램+Firebase 알림) ═══ */
+const KY_BOT_TOKEN   = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';
+const KY_ADMIN_CHAT  = '1988388217';
 
+async function sendCodeRequest(){
+  const msg = (document.getElementById('codeReqMsg').value||'').trim();
+  const resEl = document.getElementById('codeReqResult');
+  if(!msg){ resEl.textContent='메시지를 입력해주세요.'; resEl.style.color='#dc2626'; return; }
+  resEl.textContent='전송 중...'; resEl.style.color='#6b7280';
+
+  const text = '🔑 [KY주문] 대리점 코드 요청\n\n' + msg + '\n\n🕐 ' + new Date().toLocaleString('ko-KR');
+  let ok = false;
+  // ① 텔레그램 발송
+  try{
+    const res = await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({chat_id:KY_ADMIN_CHAT, text, parse_mode:'HTML'})
+    });
+    const d = await res.json();
+    if(d.ok) ok=true;
+  }catch(e){}
+
+  // ② Firebase 알림 저장
   const fb = window._fb;
-  const now = new Date().toISOString();
-  const reqId = 'codereq_' + Date.now();
-
-  // Firebase 알림 저장
   if(fb && fb.ready){
     try{
-      await fb.set(fb.ref(fb.db, 'amt_notifications/' + reqId), {
-        type: 'code_request',
-        message: '[대리점 코드 요청] "' + name + '" 대리점이 코드를 요청했습니다.',
-        dealerName: name,
-        at: now,
-        read: false
+      await fb.set(fb.ref(fb.db,'amt_notifications/code_req_'+Date.now()),{
+        type:'code_request', message:'[코드요청] '+msg,
+        at:new Date().toISOString(), read:false
       });
-    }catch(e){ console.warn('코드요청 저장 실패', e); }
+      ok = true;
+    }catch(e){}
   }
 
-  // 텔레그램으로도 발송
-  if(typeof sendTelegramKY === 'function'){
-    const text = '🔑 <b>대리점 코드 요청</b>\n\n🏢 대리점명: <b>' + name + '</b>\n🕐 요청시각: ' + new Date(now).toLocaleString('ko-KR');
-    sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, text).catch(()=>{});
+  if(ok){
+    resEl.textContent='✅ 관리자에게 전송되었습니다. 잠시 기다려주세요.';
+    resEl.style.color='#15803d';
+    document.getElementById('codeReqMsg').value='';
+  } else {
+    resEl.textContent='❌ 전송 실패. Firebase 연결을 확인하세요.';
+    resEl.style.color='#dc2626';
   }
-
-  msg.textContent = '✅ 관리자에게 알림을 보냈습니다. 잠시 후 연락드립니다.';
-  msg.style.color = 'var(--green)';
-  document.getElementById('dealerNameForHelp').value = '';
 }
 
 async function doLogin(){
@@ -1242,10 +1238,12 @@ async function doLogin(){
     }
 
     currentDealer = dealer;
-    // 코드 영구 저장 (로그인 유지 + 다음번 자동채우기용)
+    // ★ 자동 로그인: 입력한 값 그대로 저장 (코드 또는 이름)
     const savedCode = dealer.code || dealer.id;
+    const inputVal = document.getElementById('dealerCodeInput').value.trim();
     localStorage.setItem(LS_DEALER, JSON.stringify({ id: dealer.id, name: dealer.name, code: savedCode }));
-    localStorage.setItem('ky_last_dealer_code', savedCode);
+    // 다음 접속 시 자동 채울 값: 실제 입력값 우선
+    localStorage.setItem('ky_last_dealer_code', inputVal || savedCode);
 
     hideLoading();
     enterApp();
@@ -1605,20 +1603,6 @@ async function submitOrder(){
 
     // 로컬 알림 기록 (제출 확인용)
     addLocalNotif('🚀 주문이 접수되었습니다', order.items.map(i=>i.product+'×'+i.qty).join(', '), orderId);
-
-    // ★ Firebase amt_notifications에 저장 → AMT 앱 팝업 알림
-    var notifId = 'ky_new_' + orderId;
-    var itemsText = order.items.map(function(i){ return i.product+'×'+i.qty; }).join(', ');
-    fb.set(fb.ref(fb.db, 'amt_notifications/' + notifId), {
-      type: 'ky_order',
-      message: '[KY새주문] ' + order.dealerName + ' | ' + itemsText + ' | ' + Number(order.total).toLocaleString('ko-KR') + '원',
-      orderId: orderId,
-      dealerName: order.dealerName,
-      orderType: order.orderType,
-      status: 'pending',
-      at: order.createdAt,
-      read: false
-    }).catch(function(){});
 
     // ★ 텔레그램으로 주문 알림 발송 (총관리자, 비동기)
     sendTelegramOrder(order).catch(() => {});
