@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>KY · 주문</title>
+<title>KY 주문시스템</title>
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
@@ -11,7 +11,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="KY주문">
+<meta name="apple-mobile-web-app-title" content="KY 주문시스템">
 <link rel="apple-touch-icon" href="icon-192.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -230,13 +230,19 @@ body{
   padding:24px;
 }
 .login-logo{
-  width:80px;height:80px;border-radius:22px;
+  width:96px;height:96px;border-radius:24px;
   background:var(--ky);
-  display:flex;align-items:center;justify-content:center;
-  font-family:'JetBrains Mono',monospace;
-  font-size:1.3rem;font-weight:700;color:#fff;letter-spacing:2px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
   box-shadow:0 8px 24px rgba(217,119,6,0.35);
-  margin-bottom:20px;
+  margin-bottom:20px;gap:4px;
+}
+.login-logo-text-big{
+  font-family:'JetBrains Mono',monospace;
+  font-size:1.5rem;font-weight:900;color:#fff;letter-spacing:3px;line-height:1;
+}
+.login-logo-text-small{
+  font-size:.52rem;font-weight:700;color:rgba(255,255,255,0.9);
+  letter-spacing:.5px;line-height:1;text-align:center;
 }
 .login-title{
   font-size:1.6rem;font-weight:900;color:var(--text);
@@ -419,36 +425,21 @@ input[readonly]:focus{border-color:var(--border);box-shadow:none;}
 .cart-qty{
   display:flex;align-items:center;gap:8px;flex-shrink:0;
 }
-.qty-btn{
-  width:30px;height:30px;border-radius:8px;
-  background:var(--ky-mid);color:var(--ky-dark);
-  border:1.5px solid var(--border2);
-  font-size:1.1rem;font-weight:700;
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;transition:all .15s;font-family:inherit;
-}
-.qty-btn:hover{background:var(--border2);}
-.qty-num{
+.qty-btn{ display:none; }
+.qty-num{ display:none; }
+/* ★ 직접 숫자 입력 필드 */
+.qty-input-direct{
+  width:88px;padding:5px 8px;
+  border:1.5px solid var(--ky);border-radius:8px;
+  font-size:.95rem;font-weight:700;text-align:right;
   font-family:'JetBrains Mono',monospace;
-  font-size:1rem;font-weight:700;color:var(--text);
-  min-width:28px;text-align:center;
-}
-/* ★ 수량 직접 입력 input */
-.qty-input{
-  width:80px;
-  font-family:'JetBrains Mono',monospace;
-  font-size:1rem;font-weight:700;color:var(--text);
-  text-align:center;
-  background:var(--surface2);
-  border:2px solid var(--border2);
-  border-radius:8px;
-  padding:5px 6px;
-  outline:none;
+  color:var(--text);background:#fff;outline:none;
   -moz-appearance:textfield;
 }
-.qty-input:focus{border-color:var(--ky);box-shadow:0 0 0 3px rgba(217,119,6,.12);}
-.qty-input::-webkit-outer-spin-button,
-.qty-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.qty-input-direct:focus{
+  border-color:var(--ky-dark);
+  box-shadow:0 0 0 2px rgba(217,119,6,.18);
+}
 .cart-remove{
   width:28px;height:28px;border-radius:8px;
   background:var(--red-light);color:var(--red);
@@ -761,7 +752,10 @@ textarea.memo-input{
 
 <!-- ─── LOGIN SCREEN ─── -->
 <div id="loginScreen">
-  <div class="login-logo">KY</div>
+  <div class="login-logo">
+    <div class="login-logo-text-big">KY</div>
+    <div class="login-logo-text-small">주문시스템</div>
+  </div>
   <div class="login-title">KY 주문 시스템</div>
   <div class="login-sub">대리점 코드 또는 대리점 이름을 입력하세요</div>
 
@@ -775,16 +769,18 @@ textarea.memo-input{
     <button class="login-btn" onclick="doLogin()">🔑 로그인</button>
     <div class="login-msg" id="loginMsg"></div>
 
-    <!-- 코드 분실 알림 -->
-    <div style="margin-top:14px;padding:12px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:10px">
-      <div style="font-size:.78rem;font-weight:700;color:#854d0e;margin-bottom:8px">🔑 코드를 모르시나요?</div>
-      <textarea id="codeReqMsg" placeholder="대리점 이름과 연락처를 입력하세요..."
-        style="width:100%;padding:8px 10px;border:1.5px solid #fde047;border-radius:6px;font-family:inherit;font-size:.8rem;min-height:60px;resize:none;outline:none;background:#fffbeb;margin-bottom:8px"></textarea>
-      <button onclick="sendCodeRequest()"
-        style="width:100%;background:#d97706;color:#fff;border:none;border-radius:6px;padding:9px;font-family:inherit;font-size:.82rem;font-weight:700;cursor:pointer">
-        📨 관리자에게 코드 요청 보내기
+    <!-- ★ 코드 모를 때 관리자에게 알림 -->
+    <div style="margin-top:16px;padding:14px 16px;background:var(--ky-light);border:1.5px dashed var(--border2);border-radius:var(--radius-sm)">
+      <div style="font-size:.78rem;font-weight:700;color:var(--ky-dark);margin-bottom:8px">🔑 코드를 모르시나요?</div>
+      <input type="text" id="dealerNameForHelp" placeholder="대리점 이름 입력"
+        style="width:100%;background:#fff;border:1.5px solid var(--border);border-radius:6px;
+          padding:9px 12px;font-family:inherit;font-size:.88rem;margin-bottom:8px;outline:none">
+      <button onclick="requestDealerCode()"
+        style="width:100%;background:var(--ky-mid);color:var(--ky-dark);border:1.5px solid var(--border2);
+          border-radius:6px;padding:9px;font-family:inherit;font-size:.82rem;font-weight:700;cursor:pointer">
+        📨 관리자에게 코드 요청
       </button>
-      <div id="codeReqResult" style="font-size:.75rem;margin-top:6px;min-height:16px;text-align:center"></div>
+      <div id="helpRequestMsg" style="font-size:.75rem;color:var(--text2);margin-top:6px;min-height:16px;text-align:center"></div>
     </div>
 
     <button class="setup-toggle" onclick="toggleFirebaseSetup()">
@@ -812,7 +808,10 @@ textarea.memo-input{
   <!-- HEADER -->
   <div class="header">
     <div class="logo">
-      <div class="logo-icon">KY</div>
+      <div class="logo-icon" style="flex-direction:column;gap:1px;width:38px;height:38px">
+        <span style="font-size:.65rem;font-weight:900;letter-spacing:1px;line-height:1">KY</span>
+        <span style="font-size:.38rem;font-weight:700;letter-spacing:.3px;line-height:1;opacity:.9">주문</span>
+      </div>
       <div>
         <div class="logo-text">주문 시스템</div>
         <div class="logo-sub" id="headerDealerName">로딩중...</div>
@@ -1173,65 +1172,41 @@ function saveFbSettingsMain(){
 /* ═══════════════════════════════════════════════════
    LOGIN / SESSION
 ═══════════════════════════════════════════════════ */
-/* ═══ 코드 분실 알림 (관리자에게 텔레그램+Firebase 알림) ═══ */
-const KY_BOT_TOKEN   = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';
-const KY_ADMIN_CHAT  = '1988388217';
+/* ★ 대리점 코드 모를 때 관리자에게 알림 요청 */
+async function requestDealerCode(){
+  const name = (document.getElementById('dealerNameForHelp').value||'').trim();
+  const msg = document.getElementById('helpRequestMsg');
+  if(!name){ msg.textContent='대리점 이름을 입력하세요.'; msg.style.color='var(--red)'; return; }
 
-// ★ 일반 관리자 텔레그램 Chat ID 목록 (나중에 추가)
-const KY_ADMIN_EXTRA_CHATS = [
-  // '111222333',  // 일반관리자1 Chat ID — 추가 예정
-  // '444555666',  // 일반관리자2 Chat ID — 추가 예정
-];
-
-async function sendCodeRequest(){
-  const msg = (document.getElementById('codeReqMsg').value||'').trim();
-  const resEl = document.getElementById('codeReqResult');
-  if(!msg){ resEl.textContent='메시지를 입력해주세요.'; resEl.style.color='#dc2626'; return; }
-  resEl.textContent='전송 중...'; resEl.style.color='#6b7280';
-
-  const text = '🔑 [KY주문] 대리점 코드 요청\n\n' + msg + '\n\n🕐 ' + new Date().toLocaleString('ko-KR');
-  let ok = false;
-
-  // ① 총관리자 텔레그램 발송
-  try{
-    const res = await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({chat_id:KY_ADMIN_CHAT, text, parse_mode:'HTML'})
-    });
-    const d = await res.json();
-    if(d.ok) ok=true;
-  }catch(e){}
-
-  // ② 일반 관리자 텔레그램 발송 (추가된 Chat ID 모두)
-  for(const chatId of KY_ADMIN_EXTRA_CHATS){
-    try{
-      await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({chat_id:chatId, text, parse_mode:'HTML'})
-      });
-    }catch(e){}
-  }
-
-  // ③ Firebase 알림 저장 → AMT 앱 모든 관리자 팝업으로 연결
   const fb = window._fb;
+  const now = new Date().toISOString();
+  const reqId = 'codereq_' + Date.now();
+
+  // Firebase 알림 저장
   if(fb && fb.ready){
     try{
-      await fb.set(fb.ref(fb.db,'amt_notifications/code_req_'+Date.now()),{
-        type:'code_request', message:'[코드요청] '+msg,
-        at:new Date().toISOString(), read:false
+      await fb.set(fb.ref(fb.db, 'amt_notifications/' + reqId), {
+        type: 'code_request',
+        message: '[대리점 코드 요청] "' + name + '" 대리점이 코드를 요청했습니다.',
+        dealerName: name,
+        at: now,
+        read: false
       });
-      ok = true;
-    }catch(e){}
+    }catch(e){ console.warn('코드요청 저장 실패', e); }
   }
 
-  if(ok){
-    resEl.textContent='✅ 관리자에게 전송되었습니다. 잠시 기다려주세요.';
-    resEl.style.color='#15803d';
-    document.getElementById('codeReqMsg').value='';
-  } else {
-    resEl.textContent='❌ 전송 실패. Firebase 연결을 확인하세요.';
-    resEl.style.color='#dc2626';
+  // 텔레그램으로도 발송 (총관리자 + 나중에 추가할 일반관리자)
+  if(typeof sendTelegramKY === 'function'){
+    var teleText = '🔑 <b>대리점 코드 요청</b>\n\n🏢 대리점명: <b>' + name + '</b>\n🕐 요청시각: ' + new Date(now).toLocaleString('ko-KR');
+    sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, teleText).catch(()=>{});
+    // 나중에 추가할 일반관리자 채팅 ID
+    // if(KY_ADMIN2_CHAT_ID) sendTelegramKY(KY_ADMIN2_CHAT_ID, teleText).catch(()=>{});
+    // if(KY_ADMIN3_CHAT_ID) sendTelegramKY(KY_ADMIN3_CHAT_ID, teleText).catch(()=>{});
   }
+
+  msg.textContent = '✅ 관리자에게 알림을 보냈습니다. 잠시 후 연락드립니다.';
+  msg.style.color = 'var(--green)';
+  document.getElementById('dealerNameForHelp').value = '';
 }
 
 async function doLogin(){
@@ -1271,12 +1246,10 @@ async function doLogin(){
     }
 
     currentDealer = dealer;
-    // ★ 자동 로그인: 입력한 값 그대로 저장 (코드 또는 이름)
+    // 코드 영구 저장 (로그인 유지 + 다음번 자동채우기용)
     const savedCode = dealer.code || dealer.id;
-    const inputVal = document.getElementById('dealerCodeInput').value.trim();
     localStorage.setItem(LS_DEALER, JSON.stringify({ id: dealer.id, name: dealer.name, code: savedCode }));
-    // 다음 접속 시 자동 채울 값: 실제 입력값 우선
-    localStorage.setItem('ky_last_dealer_code', inputVal || savedCode);
+    localStorage.setItem('ky_last_dealer_code', savedCode);
 
     hideLoading();
     enterApp();
@@ -1487,15 +1460,6 @@ function backToStep1(){ goToStepUI(1); }
 
 function goToStep3(){
   if(!cart.length){ toast('장바구니가 비었습니다','error'); return; }
-  // ★ input 필드에서 최신 수량 동기화
-  cart.forEach((item, idx) => {
-    const el = document.getElementById('qtyNum_'+idx);
-    if(el && el.tagName === 'INPUT'){
-      const raw = el.value.replace(/[^0-9]/g,'');
-      const num = parseInt(raw)||0;
-      if(num >= 1) item.qty = num;
-    }
-  });
   const hasZeroQty = cart.some(c => c.qty <= 0);
   if(hasZeroQty){ toast('수량은 1개 이상이어야 합니다','error'); return; }
   goToStepUI(3);
@@ -1511,15 +1475,13 @@ function renderCartItems(){
       <div class="cart-item-icon">${icons[item.product]||'📦'}</div>
       <div class="cart-item-info">
         <div class="cart-item-name">${item.product}</div>
-        <div class="cart-item-price">${fmt(item.price)}원 × <span id="qtyDisp_${idx}">${item.qty.toLocaleString('ko-KR')}</span>개 = <b style="color:var(--ky)">${fmt(item.price*item.qty)}원</b></div>
+        <div class="cart-item-price">${fmt(item.price)}원 × <span id="qtyDisp_${idx}">${item.qty}</span> = <b style="color:var(--ky)">${fmt(item.price*item.qty)}원</b></div>
       </div>
       <div class="cart-qty">
-        <input type="text" inputmode="numeric" class="qty-input"
-          id="qtyNum_${idx}"
-          value="${item.qty.toLocaleString('ko-KR')}"
-          onInput="onQtyInput(${idx},this)"
-          onFocus="this.select()"
-          placeholder="수량">
+        <input type="text" inputmode="numeric" class="qty-input-direct"
+          id="qtyInput_${idx}" value="${item.qty.toLocaleString('ko-KR')}"
+          oninput="onQtyInput(${idx},this)"
+          onblur="onQtyBlur(${idx},this)">
       </div>
       <button class="cart-remove" onclick="removeCart(${idx})">✕</button>
     </div>
@@ -1528,42 +1490,47 @@ function renderCartItems(){
   renderOrderTotal();
 }
 
-function onQtyInput(idx, el){
-  // 숫자 외 제거 (콤마 등 허용)
-  let raw = el.value.replace(/[^0-9]/g,'');
-  let num = parseInt(raw)||0;
-  if(num < 1) num = 1;
-  if(num > 99999) num = 99999;
-  cart[idx].qty = num;
-  // 콤마 자동 삽입 (커서 위치 유지)
-  const formatted = num.toLocaleString('ko-KR');
-  el.value = formatted;
-  // 합계 업데이트
-  const qDisp = document.getElementById('qtyDisp_'+idx);
-  if(qDisp) qDisp.textContent = num.toLocaleString('ko-KR');
+function changeQty(idx, delta){
+  cart[idx].qty = Math.max(1, cart[idx].qty + delta);
+  var inp = document.getElementById('qtyInput_'+idx);
+  if(inp) inp.value = cart[idx].qty.toLocaleString('ko-KR');
+  var qDisp = document.getElementById('qtyDisp_'+idx);
+  if(qDisp) qDisp.textContent = cart[idx].qty;
   renderOrderTotal();
-  const cartItemInfo = document.querySelectorAll('.cart-item')[idx];
+  var cartItemInfo = document.querySelectorAll('.cart-item')[idx];
   if(cartItemInfo){
-    const b = cartItemInfo.querySelector('b');
-    if(b) b.textContent = fmt(cart[idx].price * num) + '원';
+    var b = cartItemInfo.querySelector('b');
+    if(b) b.textContent = fmt(cart[idx].price * cart[idx].qty) + '원';
   }
 }
 
-// 하위 호환 (editOrder에서 여전히 사용)
-function changeQty(idx, delta){
-  cart[idx].qty = Math.max(1, cart[idx].qty + delta);
-  const el = document.getElementById('qtyNum_'+idx);
-  if(el && el.tagName==='INPUT'){
-    el.value = cart[idx].qty.toLocaleString('ko-KR');
+/* ★ 수량 직접 입력 - 콤마 자동 + 실시간 금액 업데이트 */
+function onQtyInput(idx, el){
+  // 숫자와 콤마만 허용
+  var raw = el.value.replace(/[^0-9]/g, '');
+  var num = parseInt(raw) || 0;
+  // 커서 위치 유지하며 콤마 포맷
+  el.value = num > 0 ? num.toLocaleString('ko-KR') : '';
+  if(num > 0){
+    cart[idx].qty = num;
+    var qDisp = document.getElementById('qtyDisp_'+idx);
+    if(qDisp) qDisp.textContent = num;
+    renderOrderTotal();
+    var cartItemInfo = document.querySelectorAll('.cart-item')[idx];
+    if(cartItemInfo){
+      var b = cartItemInfo.querySelector('b');
+      if(b) b.textContent = fmt(cart[idx].price * num) + '원';
+    }
   }
-  const qDisp = document.getElementById('qtyDisp_'+idx);
-  if(qDisp) qDisp.textContent = cart[idx].qty;
+}
+
+function onQtyBlur(idx, el){
+  // blur 시 최소 1개 보장
+  var raw = el.value.replace(/[^0-9]/g, '');
+  var num = Math.max(1, parseInt(raw) || 1);
+  cart[idx].qty = num;
+  el.value = num.toLocaleString('ko-KR');
   renderOrderTotal();
-  const cartItemInfo = document.querySelectorAll('.cart-item')[idx];
-  if(cartItemInfo){
-    const b = cartItemInfo.querySelector('b');
-    if(b) b.textContent = fmt(cart[idx].price * cart[idx].qty) + '원';
-  }
 }
 
 function removeCart(idx){
@@ -1670,6 +1637,20 @@ async function submitOrder(){
 
     // 로컬 알림 기록 (제출 확인용)
     addLocalNotif('🚀 주문이 접수되었습니다', order.items.map(i=>i.product+'×'+i.qty).join(', '), orderId);
+
+    // ★ Firebase amt_notifications에 저장 → AMT 앱 팝업 알림
+    var notifId = 'ky_new_' + orderId;
+    var itemsText = order.items.map(function(i){ return i.product+'×'+i.qty; }).join(', ');
+    fb.set(fb.ref(fb.db, 'amt_notifications/' + notifId), {
+      type: 'ky_order',
+      message: '[KY새주문] ' + order.dealerName + ' | ' + itemsText + ' | ' + Number(order.total).toLocaleString('ko-KR') + '원',
+      orderId: orderId,
+      dealerName: order.dealerName,
+      orderType: order.orderType,
+      status: 'pending',
+      at: order.createdAt,
+      read: false
+    }).catch(function(){});
 
     // ★ 텔레그램으로 주문 알림 발송 (총관리자, 비동기)
     sendTelegramOrder(order).catch(() => {});
@@ -1909,12 +1890,9 @@ function openEditOrder(id){
       <div style="flex:1;font-weight:700;font-size:.9rem">${item.product}</div>
       <div style="font-size:.78rem;color:var(--text2)">${fmt(item.price)}원/개</div>
       <div style="display:flex;align-items:center;gap:6px">
-        <input type="text" inputmode="numeric" class="qty-input"
-          id="editQty_${idx}"
-          value="${item.qty.toLocaleString('ko-KR')}"
-          onInput="onEditQtyInput(${idx},this)"
-          onFocus="this.select()"
-          style="width:90px">
+        <button class="qty-btn" onclick="editQtyChange(${idx},-1)">−</button>
+        <span class="qty-num" id="editQty_${idx}" style="min-width:30px;text-align:center">${item.qty}</span>
+        <button class="qty-btn" onclick="editQtyChange(${idx},+1)">+</button>
       </div>
       <div style="font-family:monospace;font-weight:700;color:var(--ky);min-width:70px;text-align:right" id="editSubtotal_${idx}">${fmt(item.qty*item.price)}원</div>
     </div>
@@ -1942,33 +1920,16 @@ function openEditOrder(id){
   document.body.style.overflow = 'hidden';
 }
 
-function onEditQtyInput(idx, el){
-  if(!window._editItems) return;
-  let raw = el.value.replace(/[^0-9]/g,'');
-  let num = parseInt(raw)||0;
-  if(num < 1) num = 1;
-  if(num > 99999) num = 99999;
-  window._editItems[idx].qty = num;
-  el.value = num.toLocaleString('ko-KR');
-  const price = window._editItems[idx].price;
-  const subEl = document.getElementById('editSubtotal_'+idx);
-  if(subEl) subEl.textContent = fmt(num*price)+'원';
-  const total = window._editItems.reduce((s,i)=>s+i.qty*i.price,0);
-  const totalEl = document.getElementById('editTotal');
-  if(totalEl) totalEl.textContent = fmt(total)+'원';
-}
-
-// 하위 호환
 function editQtyChange(idx, delta){
   if(!window._editItems) return;
   window._editItems[idx].qty = Math.max(1, window._editItems[idx].qty + delta);
   const qty = window._editItems[idx].qty;
   const price = window._editItems[idx].price;
   const qtyEl = document.getElementById('editQty_'+idx);
-  if(qtyEl && qtyEl.tagName==='INPUT') qtyEl.value = qty.toLocaleString('ko-KR');
-  else if(qtyEl) qtyEl.textContent = qty;
   const subEl = document.getElementById('editSubtotal_'+idx);
+  if(qtyEl) qtyEl.textContent = qty;
   if(subEl) subEl.textContent = fmt(qty*price)+'원';
+  // 합계 업데이트
   const total = window._editItems.reduce((s,i)=>s+i.qty*i.price,0);
   const totalEl = document.getElementById('editTotal');
   if(totalEl) totalEl.textContent = fmt(total)+'원';
