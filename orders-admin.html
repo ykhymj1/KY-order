@@ -1281,8 +1281,8 @@ function toggleAdminSettings(){
 window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
-    navigator.serviceWorker.register('/KY-order/sw.js')
-      .then(r => console.log('[KY Admin SW] 등록 완료:', r.scope))
+    navigator.serviceWorker.register('/KY-order/sw.js', { updateViaCache: 'none' })
+      .then(r => { console.log('[KY Admin SW] 등록 완료:', r.scope); r.update(); })
       .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
   }
   // 세션 복원 시도
