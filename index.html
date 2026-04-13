@@ -1085,12 +1085,16 @@ let cart = [];              // [{product, price, qty}]
 let notifications = [];     // local notification log
 let _orderListener = null;
 let _dataListener = null;
+let _metaListener = null;
+let _historyRefreshTimer = null;
+let _detailOrderId = null;
 let currentOrderType = 'order';  // 'order' | 'return' | 'exchange'
 let _editOrderId = null;
 let _submitting = false;    // 이중제출 방지 플래그
 
 const LS_DEALER = 'ky_dealer_session';
 const LS_NOTIF  = 'ky_notifications';
+const KY_MUTATION_META_PATH = 'ky_orders_meta/lastMutation';
 
 /* ═══════════════════════════════════════════════════
    UTILS
@@ -1099,6 +1103,43 @@ function fmt(n){ return Number(n||0).toLocaleString('ko-KR'); }
 function today(){ return new Date().toISOString().slice(0,10); }
 function ym(d){ return (d||'').slice(0,7); }
 function genId(){ return 'ko_'+Date.now()+'_'+Math.random().toString(36).slice(2,7); }
+function kyOrderSortStamp(order){ return order?.updatedAt || order?.statusUpdatedAt || order?.createdAt || ''; }
+function sortKyOrdersDesc(list){
+  return [...(list||[])].sort((a,b) => kyOrderSortStamp(b).localeCompare(kyOrderSortStamp(a)) || (b.orderDate||'').localeCompare(a.orderDate||''));
+}
+function scheduleOrderHistoryRefresh(reason='sync', delay=100){
+  clearTimeout(_historyRefreshTimer);
+  _historyRefreshTimer = setTimeout(() => {
+    if(!currentDealer) return;
+    loadOrderHistory().catch(err => console.warn('주문내역 자동 새로고침 실패:', reason, err));
+  }, delay);
+}
+async function touchKyMutation(kind, orderId, extra={}){
+  const fb = window._fb;
+  if(!fb || !fb.ready) return;
+  try{
+    await fb.set(fb.ref(fb.db, KY_MUTATION_META_PATH), {
+      kind,
+      orderId: orderId || '',
+      source: 'KY_APP',
+      at: new Date().toISOString(),
+      dealerId: currentDealer?.id || '',
+      ...extra
+    });
+  }catch(err){
+    console.warn('KY mutation meta 저장 실패:', err);
+  }
+}
+function refreshOpenOrderDetail(){
+  const detailModal = document.getElementById('orderDetailModal');
+  if(!_detailOrderId || !detailModal || !detailModal.classList.contains('open')) return;
+  const target = kyOrders.find(o => o.id === _detailOrderId);
+  if(!target || target.status === 'cancelled'){
+    closeOrderDetail();
+    return;
+  }
+  openOrderDetail(_detailOrderId);
+}
 
 function toast(msg, type='info'){
   const wrap = document.getElementById('toastWrap');
@@ -1663,6 +1704,7 @@ async function submitOrder(){
 
     // Firebase에 저장: ky_orders/{orderId}
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), order);
+    await touchKyMutation('create', orderId, { orderType: order.orderType || 'order' });
 
     // ★★★ kyOrders.unshift(order) 제거 ★★★
     // onValue 리스너가 Firebase 변경을 감지해서 자동으로 kyOrders를 갱신함
@@ -1770,7 +1812,7 @@ async function loadOrderHistory(){
     const all = snap.val();
     kyOrders = Object.values(all)
       .filter(o => o.dealerId === currentDealer.id)
-      .sort((a,b) => (b.createdAt||b.updatedAt||'').localeCompare(a.createdAt||a.updatedAt||'') || (b.orderDate||'').localeCompare(a.orderDate||''));
+      .sort((a,b) => kyOrderSortStamp(b).localeCompare(kyOrderSortStamp(a)) || (b.orderDate||'').localeCompare(a.orderDate||''));
     renderOrderHistoryList(kyOrders);
     renderHome();
   } catch(e){
@@ -1836,6 +1878,7 @@ function orderItemHTML(o){
 function openOrderDetail(id){
   const o = kyOrders.find(x => x.id === id);
   if(!o) return;
+  _detailOrderId = id;
   const statusMap = {
     pending:  {label:'대기중 ⏳', cls:'status-pending'},
     accepted: {label:'접수완료 ✅', cls:'status-accepted'},
@@ -1894,6 +1937,7 @@ function openOrderDetail(id){
 function closeOrderDetail(){
   document.getElementById('orderDetailModal').classList.remove('open');
   document.body.style.overflow = '';
+  _detailOrderId = null;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -2001,6 +2045,7 @@ async function saveEditOrder(){
       updatedAt: new Date().toISOString()
     };
     await fb.set(fb.ref(fb.db,'ky_orders/'+_editOrderId), updated);
+    await touchKyMutation('edit', _editOrderId, { totalQty: updated.totalQty });
     // 로컬 업데이트
     const idx = kyOrders.findIndex(x=>x.id===_editOrderId);
     if(idx>=0) kyOrders[idx] = updated;
@@ -2008,6 +2053,7 @@ async function saveEditOrder(){
     closeEditOrder();
     renderOrderHistoryList(kyOrders);
     renderHome();
+    refreshOpenOrderDetail();
   }catch(e){
     toast('❌ 수정 실패: '+e.message,'error');
   } finally {
@@ -2032,11 +2078,13 @@ async function cancelOrder(id){
   try{
     const updated = {...o, status:'cancelled', statusUpdatedAt: new Date().toISOString(), statusNote:'대리점 취소'};
     await fb.set(fb.ref(fb.db,'ky_orders/'+id), updated);
+    await touchKyMutation('cancel', id, { status: 'cancelled' });
     const idx = kyOrders.findIndex(x=>x.id===id);
     if(idx>=0) kyOrders[idx] = updated;
     toast('주문이 취소되었습니다','success');
     renderOrderHistoryList(kyOrders);
     renderHome();
+    refreshOpenOrderDetail();
   }catch(e){
     toast('❌ 취소 실패: '+e.message,'error');
   }
@@ -2076,54 +2124,53 @@ function startListeners(){
   const fb = window._fb;
   if(!fb || !fb.ready) return;
   if(!currentDealer) return;
-  // ★ 이미 리스너가 등록되어 있으면 중복 등록 방지
-  if(_orderListener) return;
 
-  // ★ 초기 1회는 화면만 동기화하고, 그 이후부터만 상태변경 알림을 띄움
-  let baselineLoaded = false;
+  if(!_orderListener){
+    // ★ 초기 1회는 화면만 동기화하고, 그 이후부터만 상태변경 알림을 띄움
+    let baselineLoaded = false;
 
-  _orderListener = fb.onValue(fb.ref(fb.db, 'ky_orders'), (snap) => {
-    const prev = JSON.parse(JSON.stringify(kyOrders || []));
+    _orderListener = fb.onValue(fb.ref(fb.db, 'ky_orders'), (snap) => {
+      const prev = JSON.parse(JSON.stringify(kyOrders || []));
 
-    if(!snap.exists()){
-      kyOrders = [];
-      renderHome();
-      renderOrderHistoryList([]);
-      baselineLoaded = true;
-      return;
-    }
+      if(!snap.exists()){
+        kyOrders = [];
+        renderHome();
+        renderOrderHistoryList([]);
+        refreshOpenOrderDetail();
+        baselineLoaded = true;
+        return;
+      }
 
-    const all = snap.val();
-    kyOrders = Object.values(all)
-      .filter(o => o.dealerId === currentDealer.id)
-      .sort((a,b) => (b.createdAt||b.updatedAt||'').localeCompare(a.createdAt||a.updatedAt||'') || (b.orderDate||'').localeCompare(a.orderDate||''));
+      const all = snap.val();
+      kyOrders = sortKyOrdersDesc(Object.values(all).filter(o => o.dealerId === currentDealer.id));
 
-    // 상태 변화 감지 → 알림
-    if(baselineLoaded){
-      kyOrders.forEach(o => {
-        const old = prev.find(x => x.id === o.id);
-        if(old && old.status !== o.status){
-          const statusLabel = {accepted:'접수완료 ✅', shipped:'출고완료 🚚', received:'반품완료 📥'};
-          const label = statusLabel[o.status];
-          if(label){
-            const msg = `주문 상태 변경: ${label}`;
-            const detail = (o.items||[]).map(i=>i.product+'×'+i.qty).join(', ');
-            addLocalNotif(msg, detail, o.id);
-            toast(msg, 'success');
-            if(Notification && Notification.permission === 'granted'){
-              new Notification('KY 주문 시스템', { body: msg + '\n' + detail, icon: 'icon-192.png', requireInteraction: true });
+      // 상태 변화 감지 → 알림
+      if(baselineLoaded){
+        kyOrders.forEach(o => {
+          const old = prev.find(x => x.id === o.id);
+          if(old && old.status !== o.status){
+            const statusLabel = {accepted:'접수완료 ✅', shipped:'출고완료 🚚', received:'반품완료 📥'};
+            const label = statusLabel[o.status];
+            if(label){
+              const msg = `주문 상태 변경: ${label}`;
+              const detail = (o.items||[]).map(i=>i.product+'×'+i.qty).join(', ');
+              addLocalNotif(msg, detail, o.id);
+              toast(msg, 'success');
+              if(Notification && Notification.permission === 'granted'){
+                new Notification('KY 주문 시스템', { body: msg + '\n' + detail, icon: 'icon-192.png', requireInteraction: true });
+              }
             }
           }
-        }
-      });
-    }
-    baselineLoaded = true;
+        });
+      }
+      baselineLoaded = true;
 
-    renderHome();
-    renderOrderHistoryList(kyOrders);
-  });
+      renderHome();
+      renderOrderHistoryList(kyOrders);
+      refreshOpenOrderDetail();
+    });
+  }
 
-  // amt_data 변경 감지 (제품/재고 업데이트)
   if(!_dataListener){
     _dataListener = fb.onValue(fb.ref(fb.db, 'amt_data'), (snap) => {
       if(!snap.exists()) return;
@@ -2132,6 +2179,24 @@ function startListeners(){
          document.getElementById('orderStep1').style.display !== 'none'){
         loadProductGrid();
       }
+    });
+  }
+
+  if(!_metaListener){
+    _metaListener = fb.onValue(fb.ref(fb.db, KY_MUTATION_META_PATH), (snap) => {
+      if(!snap.exists() || !currentDealer) return;
+      const meta = snap.val() || {};
+      if(meta.dealerId && meta.dealerId !== currentDealer.id) return;
+      scheduleOrderHistoryRefresh(meta.kind || 'meta', 70);
+    });
+  }
+
+  if(!window.__kyAutoRefreshBound){
+    window.__kyAutoRefreshBound = true;
+    window.addEventListener('focus', () => scheduleOrderHistoryRefresh('focus', 0));
+    window.addEventListener('pageshow', () => scheduleOrderHistoryRefresh('pageshow', 0));
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible') scheduleOrderHistoryRefresh('visible', 0);
     });
   }
 
@@ -2146,6 +2211,7 @@ function stopListeners(){
   if(!fb) return;
   if(_orderListener){ fb.off(fb.ref(fb.db,'ky_orders'), _orderListener); _orderListener = null; }
   if(_dataListener){ fb.off(fb.ref(fb.db,'amt_data'), _dataListener); _dataListener = null; }
+  if(_metaListener){ fb.off(fb.ref(fb.db, KY_MUTATION_META_PATH), _metaListener); _metaListener = null; }
 }
 
 /* ═══════════════════════════════════════════════════
@@ -2237,7 +2303,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // (claude.ai, 로컬 등 다른 환경에서는 보안 정책상 등록 불가 → 무시)
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
     const swPath = '/KY-order/sw.js';
-    navigator.serviceWorker.register(swPath + '?v=20260413-hotfix2')
+    navigator.serviceWorker.register(swPath + '?v=20260413-hotfix3')
       .then(r => console.log('[KY SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY SW] 등록 스킵 (정상):', e.message));
   }

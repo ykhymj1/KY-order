@@ -451,8 +451,11 @@ textarea.note-input:focus{border-color:var(--ky);}
 let allOrders = [];
 let filteredOrders = [];
 let _listener = null;
+let _metaListener = null;
+let _manualRefreshTimer = null;
 let prevPendingIds = new Set();
 let _currentDetailId = null;
+const KY_MUTATION_META_PATH = 'ky_orders_meta/lastMutation';
 
 /* ═══════════════════════════════════════════════
    UTILS
@@ -460,6 +463,29 @@ let _currentDetailId = null;
 function fmt(n){ return Number(n||0).toLocaleString('ko-KR'); }
 function today(){ return new Date().toISOString().slice(0,10); }
 function ym(d){ return (d||'').slice(0,7); }
+function kyOrderSortStamp(order){ return order?.updatedAt || order?.statusUpdatedAt || order?.createdAt || ''; }
+function sortKyOrdersDesc(list){
+  return [...(list||[])].sort((a,b) => kyOrderSortStamp(b).localeCompare(kyOrderSortStamp(a)) || (b.orderDate||'').localeCompare(a.orderDate||''));
+}
+async function touchKyMutation(kind, orderId, extra={}){
+  const fb = window._fb;
+  if(!fb || !fb.ready) return;
+  try{
+    await fb.set(fb.ref(fb.db, KY_MUTATION_META_PATH), {
+      kind,
+      orderId: orderId || '',
+      source: 'KY_ADMIN',
+      at: new Date().toISOString(),
+      ...extra
+    });
+  }catch(err){
+    console.warn('KY 관리자 meta 저장 실패:', err);
+  }
+}
+function queueManualRefresh(reason='sync', delay=100){
+  clearTimeout(_manualRefreshTimer);
+  _manualRefreshTimer = setTimeout(() => manualRefresh(reason), delay);
+}
 
 function toast(msg, type='info'){
   const wrap = document.getElementById('toastWrap');
@@ -513,83 +539,99 @@ function init(){
 function startListener(){
   const fb = window._fb;
   if(!fb || !fb.ready) return;
-  if(_listener) return;
 
-  let firstLoad = true;
-  _listener = fb.onValue(fb.ref(fb.db, 'ky_orders'), (snap) => {
-    if(!snap.exists()){
-      allOrders = [];
-      renderOrders([]);
-      updateKpi([]);
-      return;
-    }
-    const data = snap.val();
-    // ★ 취소 주문도 데이터는 유지하되 필터링은 renderOrders에서 처리
-    const incoming = Object.values(data).sort((a,b) => (b.createdAt||b.updatedAt||'').localeCompare(a.createdAt||a.updatedAt||'') || (b.orderDate||'').localeCompare(a.orderDate||''));
-
-    // ★ 새 주문 감지 (대기중인 새 주문) — 전체 사용자에게 알림
-    if(!firstLoad){
-      const newPending = incoming.filter(o => o.status === 'pending' && !prevPendingIds.has(o.id));
-      if(newPending.length > 0){
-        newPending.forEach(o => {
-          const msg = `🔔 새 주문: ${o.dealerName} — ${(o.items||[]).map(i=>i.product+'×'+i.qty).join(', ')} | ${fmt(o.total)}원`;
-          toast(msg, 'info');
-
-          // ★ 브라우저 푸시 알림 (모든 기기)
-          if(Notification && Notification.permission === 'granted'){
-            new Notification('📦 KY 새 주문!', {
-              body: `${o.dealerName}\n${(o.items||[]).map(i=>i.product+' '+i.qty+'개').join(', ')}\n합계: ${fmt(o.total)}원`,
-              icon: '/KY-order/icon-192.png',
-              badge: '/KY-order/icon-192.png',
-              tag: 'ky-neworder-' + o.id,
-              requireInteraction: true  // ★ 사용자가 닫을 때까지 유지
-            });
-          } else if(Notification && Notification.permission === 'default'){
-            Notification.requestPermission().then(perm => {
-              if(perm === 'granted'){
-                new Notification('📦 KY 새 주문!', {
-                  body: `${o.dealerName} | ${fmt(o.total)}원`,
-                  icon: '/KY-order/icon-192.png',
-                  tag: 'ky-neworder-' + o.id
-                });
-              }
-            });
-          }
-          // ★ 화면 팝업 (확인/닫기 버튼 눌러야 닫힘)
-          showNewOrderPopup(o);
-        });
-        document.getElementById('newOrderBadge').style.display = 'inline-flex';
-        setTimeout(()=>{ document.getElementById('newOrderBadge').style.display='none'; }, 15000);
+  if(!_listener){
+    let firstLoad = true;
+    _listener = fb.onValue(fb.ref(fb.db, 'ky_orders'), (snap) => {
+      if(!snap.exists()){
+        allOrders = [];
+        renderOrders([]);
+        updateKpi([]);
+        return;
       }
-    }
+      const data = snap.val();
+      // ★ 취소 주문도 데이터는 유지하되 필터링은 renderOrders에서 처리
+      const incoming = sortKyOrdersDesc(Object.values(data));
 
-    prevPendingIds = new Set(incoming.filter(o=>o.status==='pending').map(o=>o.id));
-    allOrders = incoming;
-    firstLoad = false;
+      // ★ 새 주문 감지 (대기중인 새 주문) — 전체 사용자에게 알림
+      if(!firstLoad){
+        const newPending = incoming.filter(o => o.status === 'pending' && !prevPendingIds.has(o.id));
+        if(newPending.length > 0){
+          newPending.forEach(o => {
+            const msg = `🔔 새 주문: ${o.dealerName} — ${(o.items||[]).map(i=>i.product+'×'+i.qty).join(', ')} | ${fmt(o.total)}원`;
+            toast(msg, 'info');
 
-    updateDealerFilter();
-    applyFilter();
-    updateKpi(incoming);
-    setSync(true, '실시간');
-  });
+            if(Notification && Notification.permission === 'granted'){
+              new Notification('📦 KY 새 주문!', {
+                body: `${o.dealerName}
+${(o.items||[]).map(i=>i.product+' '+i.qty+'개').join(', ')}
+합계: ${fmt(o.total)}원`,
+                icon: '/KY-order/icon-192.png',
+                badge: '/KY-order/icon-192.png',
+                tag: 'ky-neworder-' + o.id,
+                requireInteraction: true
+              });
+            } else if(Notification && Notification.permission === 'default'){
+              Notification.requestPermission().then(perm => {
+                if(perm === 'granted'){
+                  new Notification('📦 KY 새 주문!', {
+                    body: `${o.dealerName} | ${fmt(o.total)}원`,
+                    icon: '/KY-order/icon-192.png',
+                    tag: 'ky-neworder-' + o.id
+                  });
+                }
+              });
+            }
+            showNewOrderPopup(o);
+          });
+          document.getElementById('newOrderBadge').style.display = 'inline-flex';
+          setTimeout(()=>{ document.getElementById('newOrderBadge').style.display='none'; }, 15000);
+        }
+      }
 
-  // ★ 알림 권한 요청 (페이지 로드 시)
+      prevPendingIds = new Set(incoming.filter(o=>o.status==='pending').map(o=>o.id));
+      allOrders = incoming;
+      firstLoad = false;
+
+      updateDealerFilter();
+      applyFilter();
+      updateKpi(incoming);
+      setSync(true, '실시간');
+    });
+  }
+
+  if(!_metaListener){
+    _metaListener = fb.onValue(fb.ref(fb.db, KY_MUTATION_META_PATH), (snap) => {
+      if(!snap.exists()) return;
+      queueManualRefresh('meta', 70);
+    });
+  }
+
+  if(!window.__kyAdminAutoRefreshBound){
+    window.__kyAdminAutoRefreshBound = true;
+    window.addEventListener('focus', () => queueManualRefresh('focus', 0));
+    window.addEventListener('pageshow', () => queueManualRefresh('pageshow', 0));
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible') queueManualRefresh('visible', 0);
+    });
+  }
+
   if(Notification && Notification.permission === 'default'){
     Notification.requestPermission();
   }
 }
 
-function manualRefresh(){
+function manualRefresh(reason='manual'){
   const fb = window._fb;
   if(!fb||!fb.ready){ toast('Firebase 미연결','error'); return; }
-  toast('새로고침 중...','info');
+  if(reason === 'manual') toast('새로고침 중...','info');
   fb.get(fb.ref(fb.db,'ky_orders')).then(snap=>{
     if(!snap.exists()){ allOrders=[]; renderOrders([]); updateKpi([]); return; }
-    allOrders = Object.values(snap.val()).sort((a,b)=>(b.createdAt||b.updatedAt||'').localeCompare(a.createdAt||a.updatedAt||'') || (b.orderDate||'').localeCompare(a.orderDate||''));
+    allOrders = sortKyOrdersDesc(Object.values(snap.val()));
     updateDealerFilter();
     applyFilter();
     updateKpi(allOrders);
-    toast('완료','success');
+    if(reason === 'manual') toast('완료','success');
   }).catch(e=>toast('실패: '+e.message,'error'));
 }
 
@@ -799,6 +841,7 @@ async function confirmAction(orderId, targetStatus){
       processedBy: window._adminName || '─'
     };
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), updated);
+    await touchKyMutation('status', orderId, { status: targetStatus, dealerId: o.dealerId || '' });
 
     if(targetStatus === 'shipped' && o.orderType !== 'return' && o.orderType !== 'exchange'){
       await autoUpdateAmtOnShipped(o, note, now);
@@ -1352,7 +1395,7 @@ function filterByDealer(name){
 window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
-    navigator.serviceWorker.register('/KY-order/sw.js?v=20260413-hotfix2')
+    navigator.serviceWorker.register('/KY-order/sw.js?v=20260413-hotfix3')
       .then(r => console.log('[KY Admin SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
   }
