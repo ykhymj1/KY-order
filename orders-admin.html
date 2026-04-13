@@ -525,7 +525,7 @@ function startListener(){
     }
     const data = snap.val();
     // ★ 취소 주문도 데이터는 유지하되 필터링은 renderOrders에서 처리
-    const incoming = Object.values(data).sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+    const incoming = Object.values(data).sort((a,b) => (b.createdAt||b.updatedAt||'').localeCompare(a.createdAt||a.updatedAt||'') || (b.orderDate||'').localeCompare(a.orderDate||''));
 
     // ★ 새 주문 감지 (대기중인 새 주문) — 전체 사용자에게 알림
     if(!firstLoad){
@@ -585,7 +585,7 @@ function manualRefresh(){
   toast('새로고침 중...','info');
   fb.get(fb.ref(fb.db,'ky_orders')).then(snap=>{
     if(!snap.exists()){ allOrders=[]; renderOrders([]); updateKpi([]); return; }
-    allOrders = Object.values(snap.val()).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    allOrders = Object.values(snap.val()).sort((a,b)=>(b.createdAt||b.updatedAt||'').localeCompare(a.createdAt||a.updatedAt||'') || (b.orderDate||'').localeCompare(a.orderDate||''));
     updateDealerFilter();
     applyFilter();
     updateKpi(allOrders);
@@ -653,7 +653,6 @@ const statusMap = {
 
 function renderOrders(list){
   const el = document.getElementById('ordersList');
-  // ★ 취소된 주문은 관리자 목록에서도 숨김
   const visible = list.filter(o => o.status !== 'cancelled');
   if(!visible.length){
     el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">주문이 없습니다</div></div>';
@@ -663,12 +662,33 @@ function renderOrders(list){
   el.innerHTML = visible.map(o => {
     const s = statusMap[o.status] || {label:o.status, cls:'badge-pending'};
     const isNew = o.status === 'pending';
+    const isReturn = o.orderType === 'return';
+    const isExchange = o.orderType === 'exchange';
     const itemChips = (o.items||[]).map(i =>
       `<div class="order-item-chip">📦 ${i.product} ${fmt(i.qty)}개 · ${fmt(i.total)}원</div>`
     ).join('');
     const createdTime = o.createdAt ? new Date(o.createdAt).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
     const typeTag = o.orderType && o.orderType !== 'order'
       ? `<span style="font-size:.62rem;padding:1px 7px;border-radius:10px;font-weight:700;background:${o.orderType==='return'?'#fef3c7':'#eff6ff'};color:${o.orderType==='return'?'#92400e':'#1e40af'}">${o.orderType==='return'?'반품':'교환'}</span>` : '';
+
+    let actionHtml = '';
+    if(o.status === 'pending'){
+      actionHtml = `
+        <button class="btn btn-success btn-sm" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
+        ${isReturn
+          ? `<button class="btn btn-outline btn-sm" style="color:#16a34a;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
+          : `<button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고'}</button>`}
+      `;
+    }else if(o.status === 'accepted'){
+      actionHtml = `
+        ${isReturn
+          ? `<button class="btn btn-outline btn-sm" style="color:#16a34a;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
+          : `<button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고처리'}</button>`}
+        <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
+      `;
+    }else if(o.status === 'shipped' || o.status === 'received'){
+      actionHtml = `<button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>`;
+    }
 
     return `<div class="order-card ${isNew?'new-order':''}" id="oc_${o.id}">
       <div class="order-card-top">
@@ -682,20 +702,13 @@ function renderOrders(list){
       ${o.memo ? `<div class="order-memo">💬 ${o.memo}</div>` : ''}
       ${o.statusNote ? `<div class="order-memo" style="border-color:var(--ky)">📝 ${o.statusNote}${o.processedBy?' · <b>'+o.processedBy+'</b>':''}</div>` : ''}
       <div class="order-actions">
-        ${o.status === 'pending' ? `
-          <button class="btn btn-success btn-sm" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
-          <button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 출고</button>
-        ` : o.status === 'accepted' ? `
-          <button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 출고처리</button>
-          <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
-        ` : o.status === 'shipped' ? `
-          <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>
-        ` : ''}
+        ${actionHtml}
         <div class="order-total-chip">${fmt(o.total)}원</div>
       </div>
     </div>`;
   }).join('');
 }
+
 
 /* ═══════════════════════════════════════════════
    ORDER ACTIONS
@@ -704,15 +717,19 @@ function openAction(orderId, targetStatus){
   const o = allOrders.find(x => x.id === orderId);
   if(!o) return;
   _currentDetailId = orderId;
+  const isReturn = o.orderType === 'return';
+  const isExchange = o.orderType === 'exchange';
 
   const statusLabels = {
     accepted: '접수 완료 처리',
-    shipped: '출고 완료 처리',
+    shipped: isExchange ? '교환 처리' : '출고 완료 처리',
+    received: '반품 입고 처리',
     pending: '대기중으로 되돌리기'
   };
   const statusColors = {
     accepted: 'var(--green)',
     shipped: 'var(--blue)',
+    received: 'var(--green)',
     pending: 'var(--gray)'
   };
 
@@ -722,6 +739,15 @@ function openAction(orderId, targetStatus){
       <span style="font-weight:700">${fmt(i.qty)}개 · ${fmt(i.total)}원</span>
     </div>`
   ).join('');
+
+  let actionGuide = '';
+  if(targetStatus === 'shipped' && !isReturn && !isExchange){
+    actionGuide = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#1e40af">🚚 출고 처리 시 자동 실행:<br>① KY 재고 차감 ② AMT 발주 등록 ③ 수금관리 등록</div>`;
+  }else if(targetStatus === 'received' && isReturn){
+    actionGuide = `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#15803d">📥 반품 입고 처리 시 자동 실행:<br>① KY 재고 증가 ② AMT 반품매출 등록 ③ 수금관리 반품차감 반영</div>`;
+  }else if(targetStatus === 'shipped' && isExchange){
+    actionGuide = `<div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#854d0e">🔁 교환 처리: 재고·매출·수금 변동 없이 상태만 변경됩니다.</div>`;
+  }
 
   document.getElementById('detailContent').innerHTML = `
     <div class="modal-row"><span>대리점</span><span style="font-weight:700">${o.dealerName}</span></div>
@@ -734,23 +760,15 @@ function openAction(orderId, targetStatus){
     </div>
   `;
 
-  // ★ 출고 시 AMT 자동 업데이트 안내
-  const shippedNote = targetStatus === 'shipped'
-    ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:#1e40af">
-        🚚 출고 처리 시 자동 실행:<br>
-        ① KY 재고 차감 ② AMT 발주 등록 ③ 수금관리 등록
-       </div>` : '';
-
   document.getElementById('actionArea').innerHTML = `
     <div style="font-weight:700;margin-bottom:8px;color:${statusColors[targetStatus]||'var(--text)'}">
       → ${statusLabels[targetStatus]||targetStatus}
     </div>
-    ${shippedNote}
+    ${actionGuide}
     <textarea class="note-input" id="actionNote" placeholder="대리점에 전달할 메모 (선택사항)...">${o.statusNote||''}</textarea>
     <div style="display:flex;gap:8px;margin-top:4px">
       <button class="btn btn-ghost" style="flex:1" onclick="closeDetail()">취소</button>
-      <button class="btn btn-ky" style="flex:2;background:${statusColors[targetStatus]||'var(--ky)'}; border-color:${statusColors[targetStatus]||'var(--ky)'}"
-        onclick="confirmAction('${orderId}','${targetStatus}')">
+      <button class="btn btn-ky" style="flex:2;background:${statusColors[targetStatus]||'var(--ky)'}; border-color:${statusColors[targetStatus]||'var(--ky)'}" onclick="confirmAction('${orderId}','${targetStatus}')">
         확인 — ${statusLabels[targetStatus]||targetStatus}
       </button>
     </div>
@@ -782,13 +800,17 @@ async function confirmAction(orderId, targetStatus){
     };
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), updated);
 
-    // ★ 출고 처리 시 AMT amt_data 자동 업데이트
-    if(targetStatus === 'shipped'){
+    if(targetStatus === 'shipped' && o.orderType !== 'return' && o.orderType !== 'exchange'){
       await autoUpdateAmtOnShipped(o, note, now);
     }
+    if(targetStatus === 'received' && o.orderType === 'return'){
+      await autoUpdateAmtOnReturn(o, note, now);
+    }
+    if(targetStatus === 'shipped' && o.orderType === 'exchange'){
+      toast('🔁 교환 처리 완료 (재고·매출 변동 없음)', 'success');
+    }
 
-    // ★ 전체 사용자 푸시 알림 (amt_notifications에 저장 → AMT 앱에서 감지)
-    const statusLabel = {accepted:'접수완료',shipped:'출고완료',pending:'대기중'};
+    const statusLabel = {accepted:'접수완료',shipped:'출고완료',received:'반품입고완료',pending:'대기중'};
     const notifMsg = `[KY주문] ${o.dealerName} → ${statusLabel[targetStatus]||targetStatus} | ${(o.items||[]).map(i=>i.product+'×'+i.qty).join(', ')} | ${fmt(o.total)}원`;
     await fb.set(fb.ref(fb.db, 'amt_notifications/ky_' + orderId + '_' + targetStatus), {
       type: 'ky_order',
@@ -800,7 +822,6 @@ async function confirmAction(orderId, targetStatus){
       read: false
     });
 
-    // ★ 텔레그램으로 상태 변경 알림 (총관리자)
     sendTelegramStatus(o, targetStatus, note, now).catch(() => {});
 
     toast('✅ ' + o.dealerName + ' 주문 → ' + (statusLabel[targetStatus]||targetStatus), 'success');
@@ -810,6 +831,7 @@ async function confirmAction(orderId, targetStatus){
     if(confirmBtn){ confirmBtn.disabled = false; confirmBtn.textContent = '확인'; }
   }
 }
+
 
 /* ═══════════════════════════════════════════════════════
    ★ 텔레그램 알림 (orders-admin-KY)
@@ -884,62 +906,60 @@ async function autoUpdateAmtOnShipped(order, note, now){
     const invLogs = data.invLogs || [];
     const amtOrders = data.orders || [];
     const dealers = data.dealers || [];
-
-    // AMT에서 이 대리점 정보 찾기
     const dealer = dealers.find(d => d.id === order.dealerId || d.name === order.dealerName);
 
-    // ① KY 재고 차감 (invLogs에 출고 기록)
     for(const item of (order.items||[])){
+      const lineId = 'ord_ky_' + order.id + '_' + item.product.replace(/\s/g,'_');
       const invId = 'inv_ky_ship_' + order.id + '_' + item.product.replace(/\s/g,'_');
-      // 중복 방지: 이미 처리된 경우 스킵
-      if(invLogs.some(i => i.id === invId)) continue;
-      invLogs.push({
+      const invPayload = {
         id: invId,
         date: order.orderDate || now.slice(0,10),
         product: item.product,
-        qty: -Math.abs(item.qty),   // 출고: 음수
+        qty: -Math.abs(item.qty),
         type: 'out',
         company: 'KY',
         memo: `[KY주문출고] ${order.dealerName} 주문 #${order.id}`,
+        relOrder: lineId,
         relKyOrder: order.id,
-        createdAt: now
-      });
+        relKyProduct: item.product,
+        createdAt: invLogs.find(i=>i.id===invId)?.createdAt || now
+      };
+      const invIdx = invLogs.findIndex(i => i.id===invId || (i.relKyOrder===order.id && (i.relKyProduct||i.product)===item.product && Number(i.qty)<0));
+      if(invIdx >= 0) invLogs[invIdx] = { ...invLogs[invIdx], ...invPayload };
+      else invLogs.push(invPayload);
     }
 
-    // ② AMT 발주(orders) + 수금관리 자동 등록
-    // 이미 처리된 주문인지 확인
-    const alreadyExists = amtOrders.some(o => o.relKyOrder === order.id);
-    if(!alreadyExists && dealer){
+    if(dealer){
       for(const item of (order.items||[])){
+        const lineId = 'ord_ky_' + order.id + '_' + item.product.replace(/\s/g,'_');
         const dp = (dealer.products||[]).find(p => p.product === item.product);
         const price = dp ? dp.price : item.price;
-        // 수금 예정일 계산 (대리점 term 기준)
         const dueDate = calcDueDate(order.orderDate || now.slice(0,10), dealer.term || 'eom');
+        const existingIdx = amtOrders.findIndex(o => o.id === lineId || (o.relKyOrder===order.id && !(o.isReturn||o.orderType==='return') && (o.relKyProduct||o.product)===item.product));
         const newOrder = {
-          id: 'ord_ky_' + order.id + '_' + item.product.replace(/\s/g,'_'),
+          id: lineId,
           dealerId: order.dealerId,
           dealerName: order.dealerName,
           product: item.product,
-          qty: item.qty,
+          qty: Math.abs(item.qty),
           price: price,
-          total: price * item.qty,
+          total: price * Math.abs(item.qty),
           fee: 0,
           orderDate: order.orderDate || now.slice(0,10),
           dueDate: dueDate,
           status: 'pending',
           memo: `[KY주문자동] ${note||''}`,
           relKyOrder: order.id,
-          createdAt: now
+          relKyProduct: item.product,
+          createdAt: existingIdx >= 0 ? (amtOrders[existingIdx].createdAt||now) : now
         };
-        amtOrders.push(newOrder);
+        if(existingIdx >= 0) amtOrders[existingIdx] = { ...amtOrders[existingIdx], ...newOrder };
+        else amtOrders.push(newOrder);
       }
     }
 
-    // ③ Firebase에 저장
     await fb.set(fb.ref(fb.db, 'amt_data/invLogs'), invLogs);
     await fb.set(fb.ref(fb.db, 'amt_data/orders'), amtOrders);
-
-    // updatedAt 갱신
     await fb.set(fb.ref(fb.db, 'amt_data/_updatedAt'), now);
 
     toast('✅ 출고 완료 — KY재고 차감 + AMT 발주/수금 자동 등록!', 'success');
@@ -948,6 +968,81 @@ async function autoUpdateAmtOnShipped(order, note, now){
     toast('⚠️ 출고는 됐으나 AMT 자동업데이트 실패: ' + e.message, 'error');
   }
 }
+
+async function autoUpdateAmtOnReturn(order, note, now){
+  const fb = window._fb;
+  if(!fb||!fb.ready) return;
+  try{
+    const snap = await fb.get(fb.ref(fb.db,'amt_data'));
+    if(!snap.exists()){ toast('⚠️ AMT 데이터 없음 - 반품 자동 업데이트 실패','error'); return; }
+    const data = snap.val();
+    const invLogs = data.invLogs || [];
+    const amtOrders = data.orders || [];
+    const dealers = data.dealers || [];
+    const dealer = dealers.find(d => d.id === order.dealerId || d.name === order.dealerName);
+
+    for(const item of (order.items||[])){
+      const lineId = 'ord_ky_ret_' + order.id + '_' + item.product.replace(/\s/g,'_');
+      const invId = 'inv_ky_ret_' + order.id + '_' + item.product.replace(/\s/g,'_');
+      const invPayload = {
+        id: invId,
+        date: order.orderDate || now.slice(0,10),
+        product: item.product,
+        qty: +Math.abs(item.qty),
+        type: 'in',
+        company: 'KY',
+        memo: `[KY반품입고] ${order.dealerName} 주문 #${order.id}`,
+        relOrder: lineId,
+        relKyOrder: order.id,
+        relKyProduct: item.product,
+        createdAt: invLogs.find(i=>i.id===invId)?.createdAt || now
+      };
+      const invIdx = invLogs.findIndex(i => i.id===invId || (i.relKyOrder===order.id && (i.relKyProduct||i.product)===item.product && Number(i.qty)>0));
+      if(invIdx >= 0) invLogs[invIdx] = { ...invLogs[invIdx], ...invPayload };
+      else invLogs.push(invPayload);
+    }
+
+    if(dealer){
+      for(const item of (order.items||[])){
+        const lineId = 'ord_ky_ret_' + order.id + '_' + item.product.replace(/\s/g,'_');
+        const dp = (dealer.products||[]).find(p => p.product === item.product);
+        const price = dp ? dp.price : item.price;
+        const existingIdx = amtOrders.findIndex(o => o.id===lineId || (o.relKyOrder===order.id && o.isReturn && (o.relKyProduct||o.product)===item.product));
+        const payload = {
+          id: lineId,
+          dealerId: order.dealerId,
+          dealerName: order.dealerName,
+          product: item.product,
+          qty: -Math.abs(item.qty),
+          price: price,
+          total: -(price * Math.abs(item.qty)),
+          fee: 0,
+          orderDate: order.orderDate || now.slice(0,10),
+          dueDate: '',
+          status: 'done',
+          isReturn: true,
+          orderType: 'return',
+          memo: `[KY반품자동] ${note||''}`,
+          relKyOrder: order.id,
+          relKyProduct: item.product,
+          createdAt: existingIdx >= 0 ? (amtOrders[existingIdx].createdAt||now) : now
+        };
+        if(existingIdx >= 0) amtOrders[existingIdx] = { ...amtOrders[existingIdx], ...payload };
+        else amtOrders.push(payload);
+      }
+    }
+
+    await fb.set(fb.ref(fb.db,'amt_data/invLogs'), invLogs);
+    await fb.set(fb.ref(fb.db,'amt_data/orders'), amtOrders);
+    await fb.set(fb.ref(fb.db,'amt_data/_updatedAt'), now);
+
+    toast('📥 반품 입고 완료 — KY재고 플러스 + AMT 반품차감 등록!', 'success');
+  }catch(e){
+    console.error('AMT 반품 자동 업데이트 실패:', e);
+    toast('⚠️ 반품 처리됐으나 자동업데이트 실패: ' + e.message, 'error');
+  }
+}
+
 
 // 수금 예정일 계산
 function calcDueDate(orderDate, term){
