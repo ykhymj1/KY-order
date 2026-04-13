@@ -702,6 +702,8 @@ function renderOrders(list){
   }
 
   el.innerHTML = visible.map(o => {
+    // ★ 취소된 주문은 렌더링하지 않음 (이미 필터링되었지만 한 번 더 체크)
+    if(o.status === 'cancelled') return '';
     const s = statusMap[o.status] || {label:o.status, cls:'badge-pending'};
     const isNew = o.status === 'pending';
     const isReturn = o.orderType === 'return';
@@ -1395,7 +1397,7 @@ function filterByDealer(name){
 window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
-    navigator.serviceWorker.register('/KY-order/sw.js?v=20260413-hotfix4')
+    navigator.serviceWorker.register('/KY-order/sw.js?v=20260413-hotfix3')
       .then(r => console.log('[KY Admin SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
   }

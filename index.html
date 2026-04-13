@@ -2046,11 +2046,14 @@ async function saveEditOrder(){
     };
     await fb.set(fb.ref(fb.db,'ky_orders/'+_editOrderId), updated);
     await touchKyMutation('edit', _editOrderId, { totalQty: updated.totalQty });
-    // 로컬 업데이트
+    // ★ 로컬 업데이트 (주문 목록 및 상세 화면)
     const idx = kyOrders.findIndex(x=>x.id===_editOrderId);
     if(idx>=0) kyOrders[idx] = updated;
+    
     toast('✅ 주문이 수정되었습니다','success');
     closeEditOrder();
+    
+    // ★ 즉시 UI 갱신
     renderOrderHistoryList(kyOrders);
     renderHome();
     refreshOpenOrderDetail();
@@ -2079,9 +2082,13 @@ async function cancelOrder(id){
     const updated = {...o, status:'cancelled', statusUpdatedAt: new Date().toISOString(), statusNote:'대리점 취소'};
     await fb.set(fb.ref(fb.db,'ky_orders/'+id), updated);
     await touchKyMutation('cancel', id, { status: 'cancelled' });
+    // ★ 로컬 업데이트 (주문 목록에서 즉시 제거)
     const idx = kyOrders.findIndex(x=>x.id===id);
-    if(idx>=0) kyOrders[idx] = updated;
+    if(idx>=0) kyOrders.splice(idx, 1);
+    
     toast('주문이 취소되었습니다','success');
+    
+    // ★ 즉시 UI 갱신
     renderOrderHistoryList(kyOrders);
     renderHome();
     refreshOpenOrderDetail();
@@ -2144,9 +2151,8 @@ function startListeners(){
       const all = snap.val();
       kyOrders = sortKyOrdersDesc(Object.values(all).filter(o => o.dealerId === currentDealer.id));
 
-      // 상태 변화 감지 → 알림 / 수정·삭제 감지 → 토스트
+      // 상태 변화 감지 → 알림
       if(baselineLoaded){
-        // 상태 변경 알림
         kyOrders.forEach(o => {
           const old = prev.find(x => x.id === o.id);
           if(old && old.status !== o.status){
@@ -2162,16 +2168,7 @@ function startListeners(){
               }
             }
           }
-          // 수량·금액 수정 감지 → 정보 토스트
-          if(old && old.total !== o.total && old.status === o.status){
-            toast('📝 주문 정보가 업데이트되었습니다', 'info');
-          }
         });
-        // 삭제된 주문 감지 (목록에서 사라진 경우)
-        const removedCount = prev.filter(p => !kyOrders.find(o => o.id === p.id)).length;
-        if(removedCount > 0){
-          toast('주문 내역이 업데이트되었습니다', 'info');
-        }
       }
       baselineLoaded = true;
 
@@ -2196,9 +2193,7 @@ function startListeners(){
     _metaListener = fb.onValue(fb.ref(fb.db, KY_MUTATION_META_PATH), (snap) => {
       if(!snap.exists() || !currentDealer) return;
       const meta = snap.val() || {};
-      // dealerId가 명시되어 있고 자기 dealerId가 아닌 경우만 무시
-      // (빈 문자열이거나 미설정인 경우는 전체 대상 변경으로 간주하여 갱신)
-      if(meta.dealerId && meta.dealerId !== currentDealer.id && meta.dealerId !== '') return;
+      if(meta.dealerId && meta.dealerId !== currentDealer.id) return;
       scheduleOrderHistoryRefresh(meta.kind || 'meta', 70);
     });
   }
@@ -2315,7 +2310,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // (claude.ai, 로컬 등 다른 환경에서는 보안 정책상 등록 불가 → 무시)
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
     const swPath = '/KY-order/sw.js';
-    navigator.serviceWorker.register(swPath + '?v=20260413-hotfix4')
+    navigator.serviceWorker.register(swPath + '?v=20260413-hotfix3')
       .then(r => console.log('[KY SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY SW] 등록 스킵 (정상):', e.message));
   }
