@@ -2046,7 +2046,7 @@ async function saveEditOrder(){
     };
     await fb.set(fb.ref(fb.db,'ky_orders/'+_editOrderId), updated);
     await touchKyMutation('edit', _editOrderId, { totalQty: updated.totalQty });
-    // 로컬 업데이트
+    // ★ 로컬 업데이트 (주문 목록 및 상세 화면)
     const idx = kyOrders.findIndex(x=>x.id===_editOrderId);
     if(idx>=0) kyOrders[idx] = updated;
     toast('✅ 주문이 수정되었습니다','success');
@@ -2079,8 +2079,9 @@ async function cancelOrder(id){
     const updated = {...o, status:'cancelled', statusUpdatedAt: new Date().toISOString(), statusNote:'대리점 취소'};
     await fb.set(fb.ref(fb.db,'ky_orders/'+id), updated);
     await touchKyMutation('cancel', id, { status: 'cancelled' });
+    // ★ 로컬 업데이트 (주문 목록에서 즉시 제거)
     const idx = kyOrders.findIndex(x=>x.id===id);
-    if(idx>=0) kyOrders[idx] = updated;
+    if(idx>=0) kyOrders.splice(idx, 1);
     toast('주문이 취소되었습니다','success');
     renderOrderHistoryList(kyOrders);
     renderHome();

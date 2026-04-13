@@ -702,6 +702,8 @@ function renderOrders(list){
   }
 
   el.innerHTML = visible.map(o => {
+    // ★ 취소된 주문은 렌더링하지 않음 (이미 필터링되었지만 한 번 더 체크)
+    if(o.status === 'cancelled') return '';
     const s = statusMap[o.status] || {label:o.status, cls:'badge-pending'};
     const isNew = o.status === 'pending';
     const isReturn = o.orderType === 'return';
