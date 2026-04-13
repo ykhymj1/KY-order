@@ -433,6 +433,22 @@ input[readonly]:focus{border-color:var(--border);box-shadow:none;}
   font-size:1rem;font-weight:700;color:var(--text);
   min-width:28px;text-align:center;
 }
+/* ★ 수량 직접 입력 input */
+.qty-input{
+  width:80px;
+  font-family:'JetBrains Mono',monospace;
+  font-size:1rem;font-weight:700;color:var(--text);
+  text-align:center;
+  background:var(--surface2);
+  border:2px solid var(--border2);
+  border-radius:8px;
+  padding:5px 6px;
+  outline:none;
+  -moz-appearance:textfield;
+}
+.qty-input:focus{border-color:var(--ky);box-shadow:0 0 0 3px rgba(217,119,6,.12);}
+.qty-input::-webkit-outer-spin-button,
+.qty-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 .cart-remove{
   width:28px;height:28px;border-radius:8px;
   background:var(--red-light);color:var(--red);
@@ -1161,6 +1177,12 @@ function saveFbSettingsMain(){
 const KY_BOT_TOKEN   = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';
 const KY_ADMIN_CHAT  = '1988388217';
 
+// ★ 일반 관리자 텔레그램 Chat ID 목록 (나중에 추가)
+const KY_ADMIN_EXTRA_CHATS = [
+  // '111222333',  // 일반관리자1 Chat ID — 추가 예정
+  // '444555666',  // 일반관리자2 Chat ID — 추가 예정
+];
+
 async function sendCodeRequest(){
   const msg = (document.getElementById('codeReqMsg').value||'').trim();
   const resEl = document.getElementById('codeReqResult');
@@ -1169,7 +1191,8 @@ async function sendCodeRequest(){
 
   const text = '🔑 [KY주문] 대리점 코드 요청\n\n' + msg + '\n\n🕐 ' + new Date().toLocaleString('ko-KR');
   let ok = false;
-  // ① 텔레그램 발송
+
+  // ① 총관리자 텔레그램 발송
   try{
     const res = await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1179,7 +1202,17 @@ async function sendCodeRequest(){
     if(d.ok) ok=true;
   }catch(e){}
 
-  // ② Firebase 알림 저장
+  // ② 일반 관리자 텔레그램 발송 (추가된 Chat ID 모두)
+  for(const chatId of KY_ADMIN_EXTRA_CHATS){
+    try{
+      await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({chat_id:chatId, text, parse_mode:'HTML'})
+      });
+    }catch(e){}
+  }
+
+  // ③ Firebase 알림 저장 → AMT 앱 모든 관리자 팝업으로 연결
   const fb = window._fb;
   if(fb && fb.ready){
     try{
@@ -1454,6 +1487,15 @@ function backToStep1(){ goToStepUI(1); }
 
 function goToStep3(){
   if(!cart.length){ toast('장바구니가 비었습니다','error'); return; }
+  // ★ input 필드에서 최신 수량 동기화
+  cart.forEach((item, idx) => {
+    const el = document.getElementById('qtyNum_'+idx);
+    if(el && el.tagName === 'INPUT'){
+      const raw = el.value.replace(/[^0-9]/g,'');
+      const num = parseInt(raw)||0;
+      if(num >= 1) item.qty = num;
+    }
+  });
   const hasZeroQty = cart.some(c => c.qty <= 0);
   if(hasZeroQty){ toast('수량은 1개 이상이어야 합니다','error'); return; }
   goToStepUI(3);
@@ -1469,12 +1511,15 @@ function renderCartItems(){
       <div class="cart-item-icon">${icons[item.product]||'📦'}</div>
       <div class="cart-item-info">
         <div class="cart-item-name">${item.product}</div>
-        <div class="cart-item-price">${fmt(item.price)}원 × <span id="qtyDisp_${idx}">${item.qty}</span> = <b style="color:var(--ky)">${fmt(item.price*item.qty)}원</b></div>
+        <div class="cart-item-price">${fmt(item.price)}원 × <span id="qtyDisp_${idx}">${item.qty.toLocaleString('ko-KR')}</span>개 = <b style="color:var(--ky)">${fmt(item.price*item.qty)}원</b></div>
       </div>
       <div class="cart-qty">
-        <button class="qty-btn" onclick="changeQty(${idx},-1)">−</button>
-        <span class="qty-num" id="qtyNum_${idx}">${item.qty}</span>
-        <button class="qty-btn" onclick="changeQty(${idx},+1)">+</button>
+        <input type="text" inputmode="numeric" class="qty-input"
+          id="qtyNum_${idx}"
+          value="${item.qty.toLocaleString('ko-KR')}"
+          onInput="onQtyInput(${idx},this)"
+          onFocus="this.select()"
+          placeholder="수량">
       </div>
       <button class="cart-remove" onclick="removeCart(${idx})">✕</button>
     </div>
@@ -1483,15 +1528,37 @@ function renderCartItems(){
   renderOrderTotal();
 }
 
+function onQtyInput(idx, el){
+  // 숫자 외 제거 (콤마 등 허용)
+  let raw = el.value.replace(/[^0-9]/g,'');
+  let num = parseInt(raw)||0;
+  if(num < 1) num = 1;
+  if(num > 99999) num = 99999;
+  cart[idx].qty = num;
+  // 콤마 자동 삽입 (커서 위치 유지)
+  const formatted = num.toLocaleString('ko-KR');
+  el.value = formatted;
+  // 합계 업데이트
+  const qDisp = document.getElementById('qtyDisp_'+idx);
+  if(qDisp) qDisp.textContent = num.toLocaleString('ko-KR');
+  renderOrderTotal();
+  const cartItemInfo = document.querySelectorAll('.cart-item')[idx];
+  if(cartItemInfo){
+    const b = cartItemInfo.querySelector('b');
+    if(b) b.textContent = fmt(cart[idx].price * num) + '원';
+  }
+}
+
+// 하위 호환 (editOrder에서 여전히 사용)
 function changeQty(idx, delta){
   cart[idx].qty = Math.max(1, cart[idx].qty + delta);
-  // Update display
-  const qNum = document.getElementById('qtyNum_'+idx);
+  const el = document.getElementById('qtyNum_'+idx);
+  if(el && el.tagName==='INPUT'){
+    el.value = cart[idx].qty.toLocaleString('ko-KR');
+  }
   const qDisp = document.getElementById('qtyDisp_'+idx);
-  if(qNum) qNum.textContent = cart[idx].qty;
   if(qDisp) qDisp.textContent = cart[idx].qty;
   renderOrderTotal();
-  // Update price display inline
   const cartItemInfo = document.querySelectorAll('.cart-item')[idx];
   if(cartItemInfo){
     const b = cartItemInfo.querySelector('b');
@@ -1842,9 +1909,12 @@ function openEditOrder(id){
       <div style="flex:1;font-weight:700;font-size:.9rem">${item.product}</div>
       <div style="font-size:.78rem;color:var(--text2)">${fmt(item.price)}원/개</div>
       <div style="display:flex;align-items:center;gap:6px">
-        <button class="qty-btn" onclick="editQtyChange(${idx},-1)">−</button>
-        <span class="qty-num" id="editQty_${idx}" style="min-width:30px;text-align:center">${item.qty}</span>
-        <button class="qty-btn" onclick="editQtyChange(${idx},+1)">+</button>
+        <input type="text" inputmode="numeric" class="qty-input"
+          id="editQty_${idx}"
+          value="${item.qty.toLocaleString('ko-KR')}"
+          onInput="onEditQtyInput(${idx},this)"
+          onFocus="this.select()"
+          style="width:90px">
       </div>
       <div style="font-family:monospace;font-weight:700;color:var(--ky);min-width:70px;text-align:right" id="editSubtotal_${idx}">${fmt(item.qty*item.price)}원</div>
     </div>
@@ -1872,16 +1942,33 @@ function openEditOrder(id){
   document.body.style.overflow = 'hidden';
 }
 
+function onEditQtyInput(idx, el){
+  if(!window._editItems) return;
+  let raw = el.value.replace(/[^0-9]/g,'');
+  let num = parseInt(raw)||0;
+  if(num < 1) num = 1;
+  if(num > 99999) num = 99999;
+  window._editItems[idx].qty = num;
+  el.value = num.toLocaleString('ko-KR');
+  const price = window._editItems[idx].price;
+  const subEl = document.getElementById('editSubtotal_'+idx);
+  if(subEl) subEl.textContent = fmt(num*price)+'원';
+  const total = window._editItems.reduce((s,i)=>s+i.qty*i.price,0);
+  const totalEl = document.getElementById('editTotal');
+  if(totalEl) totalEl.textContent = fmt(total)+'원';
+}
+
+// 하위 호환
 function editQtyChange(idx, delta){
   if(!window._editItems) return;
   window._editItems[idx].qty = Math.max(1, window._editItems[idx].qty + delta);
   const qty = window._editItems[idx].qty;
   const price = window._editItems[idx].price;
   const qtyEl = document.getElementById('editQty_'+idx);
+  if(qtyEl && qtyEl.tagName==='INPUT') qtyEl.value = qty.toLocaleString('ko-KR');
+  else if(qtyEl) qtyEl.textContent = qty;
   const subEl = document.getElementById('editSubtotal_'+idx);
-  if(qtyEl) qtyEl.textContent = qty;
   if(subEl) subEl.textContent = fmt(qty*price)+'원';
-  // 합계 업데이트
   const total = window._editItems.reduce((s,i)=>s+i.qty*i.price,0);
   const totalEl = document.getElementById('editTotal');
   if(totalEl) totalEl.textContent = fmt(total)+'원';
