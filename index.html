@@ -1218,10 +1218,11 @@ function saveFbSettingsMain(){
 const KY_BOT_TOKEN   = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';
 const KY_ADMIN_CHAT  = '1988388217';
 
-// ★ 일반 관리자 텔레그램 Chat ID 목록 (나중에 추가)
-const KY_ADMIN_EXTRA_CHATS = [
-  // '111222333',  // 일반관리자1 Chat ID — 추가 예정
-  // '444555666',  // 일반관리자2 Chat ID — 추가 예정
+// ★ 일반관리자 텔레그램 정보 (주문신청 + 코드문의 알림만 수신)
+const KY_ADMIN_EXTRA_CHATS = []; // 기존 동일봇 방식 (미사용)
+const KY_ADMIN_EXTRAS = [
+  { token: '8571539059:AAG1BU5DH2h9Q0qoJk-46a2p3FfYkdEYnvI', chatId: '8505927461', name: '김진아' },
+  { token: '8371712654:AAFFSRwDWBokRdcj8TVIWW4kC45J3bcoXvI', chatId: '1740618685', name: '강승섭' },
 ];
 
 async function sendCodeRequest(){
@@ -1243,14 +1244,14 @@ async function sendCodeRequest(){
     if(d.ok) ok=true;
   }catch(e){}
 
-  // ② 일반 관리자 텔레그램 발송 (추가된 Chat ID 모두)
-  for(const chatId of KY_ADMIN_EXTRA_CHATS){
+  // ② 일반관리자 텔레그램 발송 (각자 별도 봇)
+  for(const admin of (KY_ADMIN_EXTRAS||[])){
     try{
-      await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
+      await fetch('https://api.telegram.org/bot'+admin.token+'/sendMessage',{
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({chat_id:chatId, text, parse_mode:'HTML'})
+        body: JSON.stringify({chat_id:admin.chatId, text, parse_mode:'HTML'})
       });
-    }catch(e){}
+    }catch(e){ console.warn('[코드문의-'+admin.name+'] 실패'); }
   }
 
   // ③ Firebase 알림 저장 → AMT 앱 모든 관리자 팝업으로 연결
@@ -1743,11 +1744,14 @@ async function submitOrder(){
    ※ index-AMT.html의 TELEGRAM_BOT_TOKEN / SUPER_ADMIN_CHAT_ID 와
       같은 값을 아래에도 입력하세요.
 ═══════════════════════════════════════════════════════ */
-const KY_TELEGRAM_BOT_TOKEN  = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';  // KY 주문 봇
-const KY_SUPER_ADMIN_CHAT_ID = '1988388217';  // 총관리자 채팅 ID
-// 나중에 추가할 관리자 채팅 ID
-// const KY_ADMIN2_CHAT_ID = '';
-// const KY_ADMIN3_CHAT_ID = '';
+const KY_TELEGRAM_BOT_TOKEN  = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';  // 총관리자 봇
+const KY_SUPER_ADMIN_CHAT_ID = '1988388217';  // 총관리자 채팅 ID (유경호)
+
+// ★ 일반관리자 텔레그램 (주문신청 + 코드문의 알림만)
+const KY_ADMIN2_BOT_TOKEN = '8571539059:AAG1BU5DH2h9Q0qoJk-46a2p3FfYkdEYnvI'; // 김진아 봇
+const KY_ADMIN2_CHAT_ID   = '8505927461';   // 김진아
+const KY_ADMIN3_BOT_TOKEN = '8371712654:AAFFSRwDWBokRdcj8TVIWW4kC45J3bcoXvI'; // 강승섭 봇
+const KY_ADMIN3_CHAT_ID   = '1740618685';   // 강승섭
 
 async function sendTelegramKY(chatId, text){
   if(!KY_TELEGRAM_BOT_TOKEN || !chatId){
@@ -1765,6 +1769,20 @@ async function sendTelegramKY(chatId, text){
     else console.log('[텔레그램-KY] 발송 완료');
   } catch(e){
     console.warn('[텔레그램-KY] 오류:', e.message);
+  }
+}
+
+/* ★ 일반관리자에게 주문/코드문의 알림 (KY_ADMIN_EXTRAS 사용) */
+async function sendTelegramToKYAdmins(text){
+  for(const admin of (KY_ADMIN_EXTRAS||[])){
+    if(!admin.token || !admin.chatId) continue;
+    try{
+      await fetch('https://api.telegram.org/bot' + admin.token + '/sendMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: admin.chatId, text: text, parse_mode: 'HTML' })
+      });
+    }catch(e){ console.warn('[KY 일반관리자-'+admin.name+'] 실패:', e.message); }
   }
 }
 
@@ -1792,7 +1810,10 @@ async function sendTelegramOrder(order){
     order.memo ? '📝 메모: ' + order.memo : '',
     '🕐 접수: ' + now
   ]).filter(function(l){ return l !== ''; });
-  await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, lines.join('\n'));
+  const msgText = lines.join('\n');
+  await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, msgText);
+  // ★ 일반관리자에게도 주문 알림 발송
+  await sendTelegramToKYAdmins(msgText).catch(()=>{});
 }
 
 /* ═══════════════════════════════════════════════════
@@ -2301,9 +2322,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // 서비스워커 등록 — github.io 배포환경에서만 작동
   // (claude.ai, 로컬 등 다른 환경에서는 보안 정책상 등록 불가 → 무시)
-  if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
-    const swPath = '/KY-order/sw.js';
-    navigator.serviceWorker.register(swPath + '?v=20260413-hotfix3')
+  if('serviceWorker' in navigator){
+    const swPath = location.hostname.endsWith('github.io') ? '/KY-order/sw.js' : '/sw.js';
+    navigator.serviceWorker.register(swPath + '?v=20260414-netlify1')
       .then(r => console.log('[KY SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY SW] 등록 스킵 (정상):', e.message));
   }

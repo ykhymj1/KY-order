@@ -1088,29 +1088,53 @@ async function autoUpdateAmtOnReturn(order, note, now){
 
 
 // 수금 예정일 계산
+/* ★ 공휴일/주말 판단용 (KR_HOLIDAYS 없어도 주말만이라도 처리) */
+const KR_HOLIDAYS_ADMIN = new Set([
+  '2025-01-01','2025-01-28','2025-01-29','2025-01-30',
+  '2025-03-01','2025-05-05','2025-05-06','2025-06-06',
+  '2025-08-15','2025-10-03','2025-10-06','2025-10-07','2025-10-08','2025-12-25',
+  '2026-01-01','2026-01-28','2026-01-29','2026-01-30',
+  '2026-03-01','2026-03-02','2026-05-05','2026-06-06',
+  '2026-08-17','2026-09-24','2026-09-25','2026-09-26',
+  '2026-10-03','2026-10-05','2026-10-09','2026-12-25',
+  '2027-01-01','2027-02-17','2027-02-18','2027-02-19',
+  '2027-03-01','2027-05-05','2027-05-24','2027-06-06','2027-06-07',
+  '2027-08-15','2027-08-16','2027-10-03','2027-10-09','2027-10-14','2027-10-15',
+  '2027-12-25','2027-12-27',
+]);
+function isNonBizAdmin(ds){
+  const d = new Date(ds+'T00:00:00'); const dow = d.getDay();
+  return dow===0 || dow===6 || KR_HOLIDAYS_ADMIN.has(ds);
+}
+function addDaysAdmin(ds, n){
+  const d = new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function nextBizAdmin(ds){
+  let cur = ds;
+  while(isNonBizAdmin(cur)){ cur = addDaysAdmin(cur,1); }
+  return cur;
+}
+
 function calcDueDate(orderDate, term){
-  const d = new Date(orderDate);
+  const d = new Date(orderDate+'T00:00:00');
   const y = d.getFullYear(), m = d.getMonth();
-  if(term === 'same') return orderDate;
+  // ★ 모든 수금일에 nextBizAdmin 적용 (토/일/공휴일 → 다음 영업일)
+  if(term === 'same') return nextBizAdmin(orderDate);
   if(term === 'same_next'){
     const next = new Date(d); next.setDate(next.getDate()+1);
-    return next.toISOString().slice(0,10);
+    return nextBizAdmin(next.toISOString().slice(0,10));
   }
   if(term === 'eom'){
-    const last = new Date(y, m+1, 0);
-    return last.toISOString().slice(0,10);
+    return nextBizAdmin(new Date(y, m+1, 0).toISOString().slice(0,10));
   }
   if(term === 'eom_next'){
-    const last = new Date(y, m+2, 0);
-    return last.toISOString().slice(0,10);
+    return nextBizAdmin(new Date(y, m+2, 0).toISOString().slice(0,10));
   }
   if(term === '3m_19'){
-    const due = new Date(y, m+3, 19);
-    return due.toISOString().slice(0,10);
+    return nextBizAdmin(new Date(y, m+3, 19).toISOString().slice(0,10));
   }
-  // 기본: 다음달 말
-  const last = new Date(y, m+2, 0);
-  return last.toISOString().slice(0,10);
+  return nextBizAdmin(new Date(y, m+2, 0).toISOString().slice(0,10));
 }
 
 function closeDetail(){
@@ -1394,10 +1418,11 @@ function filterByDealer(name){
 
 window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
-  if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
-    navigator.serviceWorker.register('/KY-order/sw.js?v=20260413-hotfix3')
-      .then(r => console.log('[KY Admin SW] 등록 완료:', r.scope))
-      .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
+  if('serviceWorker' in navigator){
+    const swPath = location.hostname.endsWith('github.io') ? '/KY-order/sw.js' : '/sw.js';
+    navigator.serviceWorker.register(swPath + '?v=20260414-netlify1')
+      .then(r => console.log('[KY Admin SW] 등록:', r.scope))
+      .catch(e => console.log('[KY Admin SW] 스킵:', e.message));
   }
   // 세션 복원 시도
   const saved = sessionStorage.getItem(ADMIN_SESSION_KEY);
