@@ -1475,7 +1475,7 @@ function toggleProduct(product, price){
   if(idx >= 0){
     cart.splice(idx, 1);
   } else {
-    cart.push({ product, price, qty: 1 });
+    cart.push({ product, price, qty: 0, _qtyBlank: true });
   }
   loadProductGrid();
 }
@@ -1529,6 +1529,9 @@ function backToStep1(){ goToStepUI(1); }
 
 function goToStep3(){
   if(!cart.length){ toast('장바구니가 비었습니다','error'); return; }
+  // ★ 수량 0인 항목 검사
+  const zeroQty = cart.find(c => !c.qty || c.qty < 1);
+  if(zeroQty){ toast(zeroQty.product + ' 수량을 입력해주세요','error'); return; }
   // ★ input 필드에서 최신 수량 동기화
   cart.forEach((item, idx) => {
     const el = document.getElementById('qtyNum_'+idx);
@@ -1558,10 +1561,10 @@ function renderCartItems(){
       <div class="cart-qty">
         <input type="text" inputmode="numeric" class="qty-input"
           id="qtyNum_${idx}"
-          value="${item.qty.toLocaleString('ko-KR')}"
+          value="${item._qtyBlank ? '' : item.qty.toLocaleString('ko-KR')}"
           onInput="onQtyInput(${idx},this)"
           onFocus="this.select()"
-          placeholder="수량">
+          placeholder="수량 입력">
       </div>
       <button class="cart-remove" onclick="removeCart(${idx})">✕</button>
     </div>
@@ -1571,16 +1574,24 @@ function renderCartItems(){
 }
 
 function onQtyInput(idx, el){
-  // 숫자 외 제거 (콤마 등 허용)
-  let raw = el.value.replace(/[^0-9]/g,'');
+  const raw = el.value.replace(/[^0-9]/g,'');
+  // 빈칸이면 qty=0 유지, _qtyBlank 해제
+  if(raw === ''){
+    cart[idx].qty = 0;
+    cart[idx]._qtyBlank = false;
+    el.value = '';
+    const qDisp = document.getElementById('qtyDisp_'+idx);
+    if(qDisp) qDisp.textContent = '0';
+    renderOrderTotal();
+    return;
+  }
   let num = parseInt(raw)||0;
-  if(num < 1) num = 1;
   if(num > 99999) num = 99999;
   cart[idx].qty = num;
-  // 콤마 자동 삽입 (커서 위치 유지)
+  cart[idx]._qtyBlank = false;
+  // 콤마 자동 삽입
   const formatted = num.toLocaleString('ko-KR');
   el.value = formatted;
-  // 합계 업데이트
   const qDisp = document.getElementById('qtyDisp_'+idx);
   if(qDisp) qDisp.textContent = num.toLocaleString('ko-KR');
   renderOrderTotal();

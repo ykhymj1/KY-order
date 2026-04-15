@@ -1,5 +1,5 @@
-// KY 주문 시스템 Service Worker v20260413-netlify1
-const CACHE = 'ky-order-v20260414-netlify1';
+// KY 주문 시스템 Service Worker v20260415-r1
+const CACHE = 'ky-order-v20260415-r1';
 const APP_ROOT = '';  // Netlify 루트 배포
 const ASSETS = [
   APP_ROOT + '/',

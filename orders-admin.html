@@ -142,13 +142,15 @@ body{background:var(--bg);color:var(--text);font-family:'Noto Sans KR',sans-seri
 .btn:active{transform:scale(.97);}
 .btn-ky{background:var(--ky);color:#fff;border-color:var(--ky);}
 .btn-ky:hover{background:var(--ky-dark);}
-.btn-success{background:var(--green);color:#fff;}
-.btn-success:hover{background:#15803d;}
+.btn-success{background:#15803d;color:#fff;font-weight:800;}
+.btn-success:hover{background:#166534;}
 .btn-danger{background:var(--red);color:#fff;}
 .btn-danger:hover{background:#b91c1c;}
 .btn-ghost{background:var(--gray-light);color:var(--text2);border-color:var(--border);}
 .btn-outline{background:#fff;color:var(--ky);border-color:var(--ky);}
-.btn-sm{padding:5px 10px;font-size:.75rem;}
+.btn-ship{background:#1d4ed8;color:#fff;border-color:#1d4ed8;font-weight:800;}
+.btn-ship:hover{background:#1e40af;}
+.btn-sm{padding:7px 14px;font-size:.82rem;}
 .btn-xs{padding:3px 8px;font-size:.7rem;}
 
 .filter-bar{
@@ -719,13 +721,13 @@ function renderOrders(list){
         <button class="btn btn-success btn-sm" onclick="openAction('${o.id}','accepted')">✅ 접수</button>
         ${isReturn
           ? `<button class="btn btn-outline btn-sm" style="color:#16a34a;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
-          : `<button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고'}</button>`}
+          : `<button class="btn btn-ship btn-sm" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고'}</button>`}
       `;
     }else if(o.status === 'accepted'){
       actionHtml = `
         ${isReturn
           ? `<button class="btn btn-outline btn-sm" style="color:#16a34a;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
-          : `<button class="btn btn-outline btn-sm" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고처리'}</button>`}
+          : `<button class="btn btn-ship btn-sm" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고처리'}</button>`}
         <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
       `;
     }else if(o.status === 'shipped' || o.status === 'received'){
