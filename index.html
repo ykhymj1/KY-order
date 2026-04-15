@@ -1276,9 +1276,12 @@ async function sendCodeRequest(){
   }
 }
 
+let _loginBusy = false;
+
 async function doLogin(){
   const raw = (document.getElementById('dealerCodeInput').value||'').trim();
   if(!raw){ showLoginMsg('대리점 코드 또는 이름을 입력하세요.'); return; }
+  if(_loginBusy) return;
   const input = raw.toUpperCase();
 
   const fb = window._fb;
@@ -1286,6 +1289,16 @@ async function doLogin(){
     showLoginMsg('⚠️ Firebase 미연결 — Firebase 설정을 먼저 입력하세요.');
     return;
   }
+
+  const loginBtn = document.querySelector('#loginScreen .login-btn');
+  const loginBtnText = loginBtn ? loginBtn.textContent.trim() : '🔑 로그인';
+  if(loginBtn){
+    loginBtn.disabled = true;
+    loginBtn.textContent = '로그인 중...';
+    loginBtn.style.opacity = '.72';
+    loginBtn.style.cursor = 'wait';
+  }
+  _loginBusy = true;
 
   showLoading();
   try{
@@ -1325,6 +1338,14 @@ async function doLogin(){
   } catch(e){
     showLoginMsg('❌ 로그인 실패: ' + e.message);
     hideLoading();
+  } finally {
+    _loginBusy = false;
+    if(loginBtn){
+      loginBtn.disabled = false;
+      loginBtn.textContent = loginBtnText;
+      loginBtn.style.opacity = '';
+      loginBtn.style.cursor = 'pointer';
+    }
   }
 }
 

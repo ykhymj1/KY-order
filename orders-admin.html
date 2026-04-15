@@ -1104,13 +1104,23 @@ const KR_HOLIDAYS_ADMIN = new Set([
   '2027-08-15','2027-08-16','2027-10-03','2027-10-09','2027-10-14','2027-10-15',
   '2027-12-25','2027-12-27',
 ]);
+function parseAdminDate(ds){
+  const [y,m,d] = String(ds||'').split('-').map(Number);
+  return new Date(y, (m||1)-1, d||1);
+}
+function fmtAdminDate(dt){
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth()+1).padStart(2,'0');
+  const dd = String(dt.getDate()).padStart(2,'0');
+  return `${yy}-${mm}-${dd}`;
+}
 function isNonBizAdmin(ds){
-  const d = new Date(ds+'T00:00:00'); const dow = d.getDay();
+  const d = parseAdminDate(ds); const dow = d.getDay();
   return dow===0 || dow===6 || KR_HOLIDAYS_ADMIN.has(ds);
 }
 function addDaysAdmin(ds, n){
-  const d = new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n);
-  return d.toISOString().slice(0,10);
+  const d = parseAdminDate(ds); d.setDate(d.getDate()+n);
+  return fmtAdminDate(d);
 }
 function nextBizAdmin(ds){
   let cur = ds;
@@ -1119,24 +1129,23 @@ function nextBizAdmin(ds){
 }
 
 function calcDueDate(orderDate, term){
-  const d = new Date(orderDate+'T00:00:00');
+  const d = parseAdminDate(orderDate);
   const y = d.getFullYear(), m = d.getMonth();
-  // ★ 모든 수금일에 nextBizAdmin 적용 (토/일/공휴일 → 다음 영업일)
   if(term === 'same') return nextBizAdmin(orderDate);
   if(term === 'same_next'){
     const next = new Date(d); next.setDate(next.getDate()+1);
-    return nextBizAdmin(next.toISOString().slice(0,10));
+    return nextBizAdmin(fmtAdminDate(next));
   }
   if(term === 'eom'){
-    return nextBizAdmin(new Date(y, m+1, 0).toISOString().slice(0,10));
+    return nextBizAdmin(fmtAdminDate(new Date(y, m+1, 0)));
   }
   if(term === 'eom_next'){
-    return nextBizAdmin(new Date(y, m+2, 0).toISOString().slice(0,10));
+    return nextBizAdmin(fmtAdminDate(new Date(y, m+2, 0)));
   }
   if(term === '3m_19'){
-    return nextBizAdmin(new Date(y, m+3, 19).toISOString().slice(0,10));
+    return nextBizAdmin(fmtAdminDate(new Date(y, m+3, 19)));
   }
-  return nextBizAdmin(new Date(y, m+2, 0).toISOString().slice(0,10));
+  return nextBizAdmin(fmtAdminDate(new Date(y, m+2, 0)));
 }
 
 function closeDetail(){
@@ -1152,10 +1161,22 @@ function closeDetail(){
    관리자 로그인 시스템
 ═══════════════════════════════════════════ */
 const ADMIN_SESSION_KEY = 'ky_admin_session';
+let _adminLoginBusy = false;
 
 async function doAdminLogin(){
   const code = (document.getElementById('adminCodeInput').value||'').trim();
   if(!code){ setAdminMsg('코드를 입력하세요.'); return; }
+  if(_adminLoginBusy) return;
+
+  const loginBtn = document.querySelector('#adminLoginScreen button[onclick="doAdminLogin()"]');
+  const loginBtnText = loginBtn ? loginBtn.textContent.trim() : '🔑 로그인';
+  if(loginBtn){
+    loginBtn.disabled = true;
+    loginBtn.textContent = '로그인 중...';
+    loginBtn.style.opacity = '.72';
+    loginBtn.style.cursor = 'wait';
+  }
+  _adminLoginBusy = true;
 
   const fb = window._fb;
   if(!fb||!fb.ready){
@@ -1183,6 +1204,14 @@ async function doAdminLogin(){
     showAdminApp();
   }catch(e){
     setAdminMsg('❌ 오류: '+e.message);
+  } finally {
+    _adminLoginBusy = false;
+    if(loginBtn){
+      loginBtn.disabled = false;
+      loginBtn.textContent = loginBtnText;
+      loginBtn.style.opacity = '';
+      loginBtn.style.cursor = 'pointer';
+    }
   }
 }
 
