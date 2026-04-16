@@ -1276,11 +1276,12 @@ async function sendCodeRequest(){
   }
 }
 
-let _loggingIn = false; // ★ 로그인 이중호출 방지
+let _loginBusy = false;
+
 async function doLogin(){
-  if(_loggingIn) return; // 이미 로그인 처리 중이면 무시
   const raw = (document.getElementById('dealerCodeInput').value||'').trim();
   if(!raw){ showLoginMsg('대리점 코드 또는 이름을 입력하세요.'); return; }
+  if(_loginBusy) return;
   const input = raw.toUpperCase();
 
   const fb = window._fb;
@@ -1289,24 +1290,19 @@ async function doLogin(){
     return;
   }
 
-  _loggingIn = true;
-  const loginBtn = document.querySelector('.login-btn');
-  if(loginBtn){ loginBtn.disabled = true; loginBtn.textContent = '로그인 중...'; }
+  const loginBtn = document.querySelector('#loginScreen .login-btn');
+  const loginBtnText = loginBtn ? loginBtn.textContent.trim() : '🔑 로그인';
+  if(loginBtn){
+    loginBtn.disabled = true;
+    loginBtn.textContent = '로그인 중...';
+    loginBtn.style.opacity = '.72';
+    loginBtn.style.cursor = 'wait';
+  }
+  _loginBusy = true;
+
   showLoading();
-
-  // ★ 15초 타임아웃
-  let _timedOut = false;
-  const _loginTimeout = setTimeout(() => {
-    _timedOut = true;
-    _loggingIn = false;
-    if(loginBtn){ loginBtn.disabled = false; loginBtn.textContent = '🔑 로그인'; }
-    hideLoading();
-    showLoginMsg('⚠️ 응답이 없습니다. 네트워크를 확인하고 다시 시도하세요.');
-  }, 15000);
-
   try{
     const snap = await fb.get(fb.ref(fb.db, 'amt_data'));
-    if(_timedOut) return;
     if(!snap.exists()){
       showLoginMsg('❌ 서버 연결 실패. 잠시 후 다시 시도하세요.');
       hideLoading();
@@ -1340,13 +1336,16 @@ async function doLogin(){
     hideLoading();
     enterApp();
   } catch(e){
-    if(_timedOut) return;
     showLoginMsg('❌ 로그인 실패: ' + e.message);
     hideLoading();
   } finally {
-    clearTimeout(_loginTimeout);
-    _loggingIn = false;
-    if(loginBtn){ loginBtn.disabled = false; loginBtn.textContent = '🔑 로그인'; }
+    _loginBusy = false;
+    if(loginBtn){
+      loginBtn.disabled = false;
+      loginBtn.textContent = loginBtnText;
+      loginBtn.style.opacity = '';
+      loginBtn.style.cursor = 'pointer';
+    }
   }
 }
 
@@ -1443,7 +1442,15 @@ function showPage(page){
 
   if(page === 'home') renderHome();
   if(page === 'order') resetOrder();
-  if(page === 'history') loadOrderHistory();
+  if(page === 'history'){
+    // onValue 리스너가 실시간으로 kyOrders를 유지하므로
+    // 데이터가 이미 있으면 렌더만, 없으면 로드
+    if(kyOrders && kyOrders.length > 0){
+      renderOrderHistoryList(kyOrders);
+    } else {
+      loadOrderHistory();
+    }
+  }
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1765,10 +1772,10 @@ async function submitOrder(){
     hideLoading();
     toast('❌ 주문 실패: ' + e.message, 'error');
   } finally {
-    // ★ 성공/실패 모두 플래그 해제 및 버튼 복원 (btn이 없어도 에러 안 남)
+    // ★ 성공/실패 모두 플래그 해제 및 버튼 복원
     _submitting = false;
-    const _btn = document.getElementById('submitBtn');
-    if(_btn){ _btn.disabled = false; _btn.textContent = '🚀 주문 제출'; }
+    btn.disabled = false;
+    btn.textContent = '🚀 주문 제출';
   }
 }
 
@@ -1852,17 +1859,21 @@ async function sendTelegramOrder(order){
 /* ═══════════════════════════════════════════════════
    ORDER HISTORY
 ═══════════════════════════════════════════════════ */
+let _loadingHistory = false;
 async function loadOrderHistory(){
+  if(_loadingHistory) return; // 중복 실행 방지
+  _loadingHistory = true;
   const fb = window._fb;
   if(!fb || !fb.ready){
     renderOrderHistoryList([]);
+    _loadingHistory = false;
     return;
   }
-  if(!currentDealer) return;
+  if(!currentDealer){ _loadingHistory = false; return; }
 
   try{
     const snap = await fb.get(fb.ref(fb.db, 'ky_orders'));
-    if(!snap.exists()){ kyOrders = []; renderOrderHistoryList([]); return; }
+    if(!snap.exists()){ kyOrders = []; renderOrderHistoryList([]); _loadingHistory = false; return; }
     const all = snap.val();
     kyOrders = Object.values(all)
       .filter(o => o.dealerId === currentDealer.id)
@@ -1871,6 +1882,8 @@ async function loadOrderHistory(){
     renderHome();
   } catch(e){
     console.warn('주문 내역 로드 실패', e);
+  } finally {
+    _loadingHistory = false;
   }
 }
 
@@ -2182,27 +2195,28 @@ function startListeners(){
   if(!_orderListener){
     // ★ 초기 1회는 화면만 동기화하고, 그 이후부터만 상태변경 알림을 띄움
     let baselineLoaded = false;
+    // 상태 비교용: id→status 맵 (전체 deepcopy 대신 경량 맵)
+    let prevStatusMap = {};
 
     _orderListener = fb.onValue(fb.ref(fb.db, 'ky_orders'), (snap) => {
-      const prev = JSON.parse(JSON.stringify(kyOrders || []));
-
       if(!snap.exists()){
         kyOrders = [];
         renderHome();
         renderOrderHistoryList([]);
         refreshOpenOrderDetail();
         baselineLoaded = true;
+        prevStatusMap = {};
         return;
       }
 
       const all = snap.val();
       kyOrders = sortKyOrdersDesc(Object.values(all).filter(o => o.dealerId === currentDealer.id));
 
-      // 상태 변화 감지 → 알림
+      // 상태 변화 감지 → 알림 (경량 맵 비교)
       if(baselineLoaded){
         kyOrders.forEach(o => {
-          const old = prev.find(x => x.id === o.id);
-          if(old && old.status !== o.status){
+          const oldStatus = prevStatusMap[o.id];
+          if(oldStatus && oldStatus !== o.status){
             const statusLabel = {accepted:'접수완료 ✅', shipped:'출고완료 🚚', received:'반품완료 📥'};
             const label = statusLabel[o.status];
             if(label){
@@ -2217,6 +2231,9 @@ function startListeners(){
           }
         });
       }
+      // 상태 맵 갱신
+      prevStatusMap = {};
+      kyOrders.forEach(o => { prevStatusMap[o.id] = o.status; });
       baselineLoaded = true;
 
       renderHome();
@@ -2237,20 +2254,34 @@ function startListeners(){
   }
 
   if(!_metaListener){
+    // meta 리스너는 onValue가 커버하지 못하는 타 딜러 변경만 보정
+    // (같은 딜러 변경은 _orderListener onValue에서 이미 처리됨)
     _metaListener = fb.onValue(fb.ref(fb.db, KY_MUTATION_META_PATH), (snap) => {
       if(!snap.exists() || !currentDealer) return;
       const meta = snap.val() || {};
+      // 다른 딜러가 유발한 meta는 무시 (내 주문 목록에 영향 없음)
       if(meta.dealerId && meta.dealerId !== currentDealer.id) return;
-      scheduleOrderHistoryRefresh(meta.kind || 'meta', 70);
+      // onValue _orderListener가 실시간으로 이미 처리하므로 별도 get() 호출 불필요
+      // 단, source가 AMT_APP인 경우(AMT에서 상태변경)만 보정 새로고침
+      if(meta.source && meta.source !== 'KY_APP'){
+        scheduleOrderHistoryRefresh(meta.kind || 'meta', 200);
+      }
     });
   }
 
   if(!window.__kyAutoRefreshBound){
     window.__kyAutoRefreshBound = true;
-    window.addEventListener('focus', () => scheduleOrderHistoryRefresh('focus', 0));
-    window.addEventListener('pageshow', () => scheduleOrderHistoryRefresh('pageshow', 0));
+    let _lastKyVisible = 0;
+    function _throttledKyRefresh(src){
+      const now = Date.now();
+      if(now - _lastKyVisible < 15000) return; // 15초 쿨다운
+      _lastKyVisible = now;
+      scheduleOrderHistoryRefresh(src, 100);
+    }
+    window.addEventListener('focus', () => _throttledKyRefresh('focus'));
+    window.addEventListener('pageshow', () => _throttledKyRefresh('pageshow'));
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible') scheduleOrderHistoryRefresh('visible', 0);
+      if(document.visibilityState === 'visible') _throttledKyRefresh('visible');
     });
   }
 
