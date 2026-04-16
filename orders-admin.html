@@ -603,29 +603,18 @@ ${(o.items||[]).map(i=>i.product+' '+i.qty+'개').join(', ')}
   }
 
   if(!_metaListener){
-    // meta 리스너: onValue가 실시간으로 처리하므로 AMT 앱 변경분만 보정
     _metaListener = fb.onValue(fb.ref(fb.db, KY_MUTATION_META_PATH), (snap) => {
       if(!snap.exists()) return;
-      const meta = snap.val() || {};
-      // KY 앱 자체 변경은 onValue _listener가 이미 처리 → 중복 스킵
-      if(meta.source && meta.source === 'KY_APP') return;
-      queueManualRefresh('meta', 200);
+      queueManualRefresh('meta', 70);
     });
   }
 
   if(!window.__kyAdminAutoRefreshBound){
     window.__kyAdminAutoRefreshBound = true;
-    let _lastAdminVisible = 0;
-    function _throttledAdminRefresh(src){
-      const now = Date.now();
-      if(now - _lastAdminVisible < 15000) return; // 15초 쿨다운
-      _lastAdminVisible = now;
-      queueManualRefresh(src, 100);
-    }
-    window.addEventListener('focus', () => _throttledAdminRefresh('focus'));
-    window.addEventListener('pageshow', () => _throttledAdminRefresh('pageshow'));
+    window.addEventListener('focus', () => queueManualRefresh('focus', 0));
+    window.addEventListener('pageshow', () => queueManualRefresh('pageshow', 0));
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible') _throttledAdminRefresh('visible');
+      if(document.visibilityState === 'visible') queueManualRefresh('visible', 0);
     });
   }
 
@@ -844,6 +833,14 @@ async function confirmAction(orderId, targetStatus){
   const confirmBtn = document.querySelector('#actionArea .btn-ky');
   if(confirmBtn){ confirmBtn.disabled = true; confirmBtn.textContent = '처리 중...'; }
 
+  // ★ 타임아웃 30초 — 오래 걸려도 버튼이 영원히 먹통이 되지 않도록
+  let _timedOut = false;
+  const _timeout = setTimeout(() => {
+    _timedOut = true;
+    if(confirmBtn){ confirmBtn.disabled = false; confirmBtn.textContent = '확인'; }
+    toast('⚠️ 처리 시간이 너무 걸립니다. 새로고침 후 다시 시도하세요.', 'error');
+  }, 30000);
+
   try{
     const now = new Date().toISOString();
     const updated = {
@@ -866,6 +863,8 @@ async function confirmAction(orderId, targetStatus){
       toast('🔁 교환 처리 완료 (재고·매출 변동 없음)', 'success');
     }
 
+    if(_timedOut) return; // 타임아웃 이미 처리됨
+
     const statusLabel = {accepted:'접수완료',shipped:'출고완료',received:'반품입고완료',pending:'대기중'};
     const notifMsg = `[KY주문] ${o.dealerName} → ${statusLabel[targetStatus]||targetStatus} | ${(o.items||[]).map(i=>i.product+'×'+i.qty).join(', ')} | ${fmt(o.total)}원`;
     await fb.set(fb.ref(fb.db, 'amt_notifications/ky_' + orderId + '_' + targetStatus), {
@@ -884,7 +883,13 @@ async function confirmAction(orderId, targetStatus){
     closeDetail();
   } catch(e){
     toast('❌ 처리 실패: ' + e.message, 'error');
-    if(confirmBtn){ confirmBtn.disabled = false; confirmBtn.textContent = '확인'; }
+  } finally {
+    // ★ 성공/실패 모두 타임아웃 취소 + 버튼 반드시 복원
+    clearTimeout(_timeout);
+    if(confirmBtn && !_timedOut){
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '확인';
+    }
   }
 }
 
@@ -1115,23 +1120,13 @@ const KR_HOLIDAYS_ADMIN = new Set([
   '2027-08-15','2027-08-16','2027-10-03','2027-10-09','2027-10-14','2027-10-15',
   '2027-12-25','2027-12-27',
 ]);
-function parseAdminDate(ds){
-  const [y,m,d] = String(ds||'').split('-').map(Number);
-  return new Date(y, (m||1)-1, d||1);
-}
-function fmtAdminDate(dt){
-  const yy = dt.getFullYear();
-  const mm = String(dt.getMonth()+1).padStart(2,'0');
-  const dd = String(dt.getDate()).padStart(2,'0');
-  return `${yy}-${mm}-${dd}`;
-}
 function isNonBizAdmin(ds){
-  const d = parseAdminDate(ds); const dow = d.getDay();
+  const d = new Date(ds+'T00:00:00'); const dow = d.getDay();
   return dow===0 || dow===6 || KR_HOLIDAYS_ADMIN.has(ds);
 }
 function addDaysAdmin(ds, n){
-  const d = parseAdminDate(ds); d.setDate(d.getDate()+n);
-  return fmtAdminDate(d);
+  const d = new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n);
+  return localFmtAdmin(d);
 }
 function nextBizAdmin(ds){
   let cur = ds;
@@ -1139,24 +1134,31 @@ function nextBizAdmin(ds){
   return cur;
 }
 
+function localFmtAdmin(dt){
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth()+1).padStart(2,'0');
+  const dd = String(dt.getDate()).padStart(2,'0');
+  return yy+'-'+mm+'-'+dd;
+}
 function calcDueDate(orderDate, term){
-  const d = parseAdminDate(orderDate);
+  const d = new Date(orderDate+'T00:00:00');
   const y = d.getFullYear(), m = d.getMonth();
+  // ★ localFmtAdmin으로 UTC 오프셋 버그 방지 + nextBizAdmin으로 휴일 다음 영업일 처리
   if(term === 'same') return nextBizAdmin(orderDate);
   if(term === 'same_next'){
     const next = new Date(d); next.setDate(next.getDate()+1);
-    return nextBizAdmin(fmtAdminDate(next));
+    return nextBizAdmin(localFmtAdmin(next));
   }
   if(term === 'eom'){
-    return nextBizAdmin(fmtAdminDate(new Date(y, m+1, 0)));
+    return nextBizAdmin(localFmtAdmin(new Date(y, m+1, 0)));
   }
   if(term === 'eom_next'){
-    return nextBizAdmin(fmtAdminDate(new Date(y, m+2, 0)));
+    return nextBizAdmin(localFmtAdmin(new Date(y, m+2, 0)));
   }
   if(term === '3m_19'){
-    return nextBizAdmin(fmtAdminDate(new Date(y, m+3, 19)));
+    return nextBizAdmin(localFmtAdmin(new Date(y, m+3, 19)));
   }
-  return nextBizAdmin(fmtAdminDate(new Date(y, m+2, 0)));
+  return nextBizAdmin(localFmtAdmin(new Date(y, m+2, 0)));
 }
 
 function closeDetail(){
@@ -1172,22 +1174,10 @@ function closeDetail(){
    관리자 로그인 시스템
 ═══════════════════════════════════════════ */
 const ADMIN_SESSION_KEY = 'ky_admin_session';
-let _adminLoginBusy = false;
 
 async function doAdminLogin(){
   const code = (document.getElementById('adminCodeInput').value||'').trim();
   if(!code){ setAdminMsg('코드를 입력하세요.'); return; }
-  if(_adminLoginBusy) return;
-
-  const loginBtn = document.querySelector('#adminLoginScreen button[onclick="doAdminLogin()"]');
-  const loginBtnText = loginBtn ? loginBtn.textContent.trim() : '🔑 로그인';
-  if(loginBtn){
-    loginBtn.disabled = true;
-    loginBtn.textContent = '로그인 중...';
-    loginBtn.style.opacity = '.72';
-    loginBtn.style.cursor = 'wait';
-  }
-  _adminLoginBusy = true;
 
   const fb = window._fb;
   if(!fb||!fb.ready){
@@ -1215,14 +1205,6 @@ async function doAdminLogin(){
     showAdminApp();
   }catch(e){
     setAdminMsg('❌ 오류: '+e.message);
-  } finally {
-    _adminLoginBusy = false;
-    if(loginBtn){
-      loginBtn.disabled = false;
-      loginBtn.textContent = loginBtnText;
-      loginBtn.style.opacity = '';
-      loginBtn.style.cursor = 'pointer';
-    }
   }
 }
 
@@ -1323,19 +1305,18 @@ async function addAdminCode(){
 }
 
 // ── 대리점 코드 관리 ──
-let _cachedDealers = null;
 function loadDealerCodes(){
   const fb = window._fb;
-  // 캐시 있으면 즉시 렌더
-  if(_cachedDealers){ renderDealerCodeList(_cachedDealers); }
   if(!fb||!fb.ready){
-    renderDealerCodeList(_cachedDealers || []);
+    // 로컬 데이터 사용
+    const d = (window.dealers||[]);
+    renderDealerCodeList(d);
     return;
   }
   fb.get(fb.ref(fb.db,'amt_data')).then(snap=>{
     if(!snap.exists()){ renderDealerCodeList([]); return; }
-    _cachedDealers = snap.val().dealers||[];
-    renderDealerCodeList(_cachedDealers);
+    const d = snap.val().dealers||[];
+    renderDealerCodeList(d);
   });
 }
 
