@@ -1444,7 +1444,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
   if('serviceWorker' in navigator){
     const swPath = location.hostname.endsWith('github.io') ? '/KY-order/sw.js' : '/sw.js';
-    navigator.serviceWorker.register(swPath + '?v=20260414-netlify1')
+    navigator.serviceWorker.register(swPath + '?v=20260416-r1')
       .then(r => console.log('[KY Admin SW] 등록:', r.scope))
       .catch(e => console.log('[KY Admin SW] 스킵:', e.message));
   }
