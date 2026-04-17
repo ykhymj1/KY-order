@@ -1776,8 +1776,16 @@ async function loadOrderHistory(){
     const snap = await fb.get(fb.ref(fb.db, 'ky_orders'));
     if(!snap.exists()){ kyOrders = []; renderOrderHistoryList([]); return; }
     const all = snap.val();
-    kyOrders = Object.values(all)
-      .filter(o => o.dealerId === currentDealer.id)
+    const allList = Object.values(all);
+
+    // ★ 6개월 이전 주문 정리
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const cutoff = sixMonthsAgo.toISOString().slice(0, 10);
+    pruneOldKyOrders(allList, cutoff).catch(() => {});
+
+    kyOrders = allList
+      .filter(o => o.dealerId === currentDealer.id && (o.createdAt||o.orderDate||'') >= cutoff)
       .sort((a,b) => kyOrderSortStamp(b).localeCompare(kyOrderSortStamp(a)) || (b.orderDate||'').localeCompare(a.orderDate||''));
     renderOrderHistoryList(kyOrders);
     renderHome();
@@ -2082,6 +2090,18 @@ function renderHome(){
 /* ═══════════════════════════════════════════════════
    REALTIME LISTENERS
 ═══════════════════════════════════════════════════ */
+
+/* ═══ 오래된 KY 주문 정리 (6개월 이전) ═══ */
+async function pruneOldKyOrders(allList, cutoff){
+  const fb = window._fb;
+  if(!fb || !fb.ready) return;
+  for(const o of allList){
+    if((o.createdAt||o.orderDate||'') < cutoff){
+      try{ await fb.set(fb.ref(fb.db,'ky_orders/'+(o.id||o._id||'')), null); }catch(e){}
+    }
+  }
+}
+
 function startListeners(){
   const fb = window._fb;
   if(!fb || !fb.ready) return;
@@ -2106,15 +2126,13 @@ function startListeners(){
       const all = snap.val();
       const allList = Object.values(all);
 
-      // ★ 6개월 이전 주문 자동 삭제 (가볍게 유지)
+      // ★ 6개월 cutoff (await 없이 필터만, 삭제는 별도 비동기 함수에서)
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
       const cutoff = sixMonthsAgo.toISOString().slice(0, 10);
-      for(const o of allList){
-        if((o.createdAt||o.orderDate||'') < cutoff){
-          try{ await fb.set(fb.ref(fb.db,'ky_orders/'+o.id), null); }catch(e2){}
-        }
-      }
+
+      // 오래된 주문 삭제는 비동기로 별도 실행 (onValue 콜백 블로킹 금지)
+      pruneOldKyOrders(allList, cutoff).catch(() => {});
 
       kyOrders = sortKyOrdersDesc(allList.filter(o => o.dealerId === currentDealer.id && (o.createdAt||o.orderDate||'') >= cutoff));
 
@@ -2277,7 +2295,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // (claude.ai, 로컬 등 다른 환경에서는 보안 정책상 등록 불가 → 무시)
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
     const swPath = '/KY-order/sw.js';
-    navigator.serviceWorker.register(swPath + '?v=20260416-fix1')
+    navigator.serviceWorker.register(swPath + '?v=20260418-v1')
       .then(r => console.log('[KY SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY SW] 등록 스킵 (정상):', e.message));
   }
