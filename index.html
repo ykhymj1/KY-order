@@ -1449,7 +1449,6 @@ function loadProductGrid(){
       <div class="product-price">${fmt(p.price)}원</div>
     </div>`;
   }).join('');
-  }).join('');
 
   document.getElementById('productGrid').innerHTML = html;
   document.getElementById('toStep2Btn').disabled = cart.length === 0;

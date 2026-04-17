@@ -1,5 +1,5 @@
 // KY 주문 시스템 Service Worker v20260413-hotfix4
-const CACHE = 'ky-order-v20260416-fix1';
+const CACHE = 'ky-order-v20260417-login-fix';
 const APP_ROOT = '/KY-order';
 const ASSETS = [
   APP_ROOT + '/',
