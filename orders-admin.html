@@ -394,19 +394,12 @@ textarea.note-input:focus{border-color:var(--ky);}
       <button class="btn btn-ky" onclick="saveAdminFb()">💾 저장 후 새로고침</button>
     </div>
   </div>
-
-  <div class="kpi-grid">
-    <div class="kpi"><div class="kpi-label">전체 주문</div><div class="kpi-value" id="kpiTotal">0</div><div class="kpi-sub">건</div></div>
-    <div class="kpi"><div class="kpi-label">⏳ 대기중</div><div class="kpi-value" id="kpiPending" style="color:var(--ky)">0</div><div class="kpi-sub">건</div></div>
-    <div class="kpi"><div class="kpi-label">✅ 접수완료</div><div class="kpi-value" id="kpiAccepted" style="color:var(--green)">0</div><div class="kpi-sub">건</div></div>
-    <div class="kpi"><div class="kpi-label">이번달 금액</div><div class="kpi-value" id="kpiAmt">0</div><div class="kpi-sub">원</div></div>
-  </div>
+  
 
   <div class="filter-bar">
     <select id="fStatus" onchange="applyFilter()">
       <option value="">전체 상태</option>
       <option value="pending">대기중</option>
-      <option value="accepted">접수완료</option>
       <option value="shipped">출고완료</option>
     </select>
     <select id="fDealer" onchange="applyFilter()">
@@ -674,16 +667,7 @@ function resetFilter(){
 /* ═══════════════════════════════════════════════
    RENDER ORDERS
 ═══════════════════════════════════════════════ */
-function updateKpi(list){
-  const mo = ym(today());
-  // ★ 취소 제외
-  const active = list.filter(o => o.status !== 'cancelled');
-  document.getElementById('kpiTotal').textContent = fmt(active.length);
-  document.getElementById('kpiPending').textContent = fmt(active.filter(o=>o.status==='pending').length);
-  document.getElementById('kpiAccepted').textContent = fmt(active.filter(o=>o.status==='accepted').length);
-  const moAmt = active.filter(o=>o.orderDate.startsWith(mo)).reduce((s,o)=>s+o.total,0);
-  document.getElementById('kpiAmt').textContent = fmt(moAmt);
-}
+function updateKpi(list){ /* KPI 패널 제거됨 */ }
 
 const statusMap = {
   pending:  {label:'대기중', cls:'badge-pending'},
@@ -714,21 +698,10 @@ function renderOrders(list){
       ? `<span style="font-size:.62rem;padding:1px 7px;border-radius:10px;font-weight:700;background:${o.orderType==='return'?'#fef3c7':'#eff6ff'};color:${o.orderType==='return'?'#92400e':'#1e40af'}">${o.orderType==='return'?'반품':'교환'}</span>` : '';
 
     let actionHtml = '';
-    if(o.status === 'pending'){
-      actionHtml = `
-        ${isReturn
-          ? `<button class="btn btn-outline btn-sm" style="color:#16a34a;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
-          : `<button class="btn btn-sm" style="background:#2563eb;color:#fff;border-color:#2563eb" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고'}</button>`}
-      `;
-    }else if(o.status === 'accepted'){
-      actionHtml = `
-        ${isReturn
-          ? `<button class="btn btn-outline btn-sm" style="color:#16a34a;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
-          : `<button class="btn btn-sm" style="background:#2563eb;color:#fff;border-color:#2563eb" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고처리'}</button>`}
-        <button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','pending')">↩ 대기로</button>
-      `;
-    }else if(o.status === 'shipped' || o.status === 'received'){
-      actionHtml = `<button class="btn btn-ghost btn-sm" onclick="openAction('${o.id}','accepted')">↩ 접수로</button>`;
+    if(o.status === 'pending' || o.status === 'accepted'){
+      actionHtml = isReturn
+        ? `<button class="btn btn-sm" style="background:#16a34a;color:#fff;border-color:#16a34a" onclick="openAction('${o.id}','received')">📥 입고처리</button>`
+        : `<button class="btn btn-sm" style="background:#2563eb;color:#fff;border-color:#2563eb" onclick="openAction('${o.id}','shipped')">🚚 ${isExchange?'교환처리':'출고'}</button>`;
     }
 
     return `<div class="order-card ${isNew?'new-order':''}" id="oc_${o.id}">
@@ -1454,7 +1427,7 @@ function filterByDealer(name){
 window.addEventListener('DOMContentLoaded', () => {
   // SW 등록 — github.io 배포환경에서만
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
-    navigator.serviceWorker.register('/KY-order/sw.js?v=20260416-fix1')
+    navigator.serviceWorker.register('/KY-order/sw.js?v=20260417-v2')
       .then(r => console.log('[KY Admin SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY Admin SW] 등록 스킵:', e.message));
   }

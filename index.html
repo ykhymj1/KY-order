@@ -711,17 +711,6 @@ textarea.memo-input{
 .settings-item-sub{font-size:.78rem;color:var(--text2);}
 
 /* ═══ ORDER TYPE BUTTONS ═══ */
-.order-type-btn{
-  background:var(--white);border:2px solid var(--border);
-  border-radius:var(--radius);padding:12px 6px;
-  font-size:1.2rem;cursor:pointer;transition:all .15s;
-  font-family:inherit;text-align:center;color:var(--text2);
-  font-weight:700;
-}
-.order-type-btn:active{transform:scale(.95);}
-.order-type-btn.active{
-  border-color:var(--ky);background:var(--ky-light);color:var(--ky-dark);
-}
 
 /* ═══ LOADING ═══ */
 .loading-overlay{
@@ -858,7 +847,6 @@ textarea.memo-input{
       </div>
       <div class="kpi">
         <div class="kpi-label">접수완료</div>
-        <div class="kpi-value" id="kpiAccepted">0</div>
         <div class="kpi-sub">건</div>
       </div>
     </div>
@@ -897,24 +885,10 @@ textarea.memo-input{
 
     <!-- Step 1: Product selection -->
     <div id="orderStep1">
-      <div class="card" style="margin-bottom:12px">
-        <div class="card-title"><div class="card-title-icon">🏷️</div>주문 유형</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-          <button class="order-type-btn active" id="otype_order" onclick="setOrderType('order')">
-            🛒<div style="font-size:.72rem;margin-top:3px">일반주문</div>
-          </button>
-          <button class="order-type-btn" id="otype_return" onclick="setOrderType('return')">
-            🔄<div style="font-size:.72rem;margin-top:3px">반품</div>
-          </button>
-          <button class="order-type-btn" id="otype_exchange" onclick="setOrderType('exchange')">
-            🔁<div style="font-size:.72rem;margin-top:3px">교환</div>
-          </button>
-        </div>
-      </div>
       <div class="card">
         <div class="card-title">
           <div class="card-title-icon">📦</div>
-          <span id="step1Title">주문할 상품을 선택하세요</span>
+          상품을 선택하세요
         </div>
         <div class="fb-warn" id="fbWarnOrder">⚠️ Firebase 미연결 상태입니다.</div>
         <div class="product-grid" id="productGrid">
@@ -1088,7 +1062,7 @@ let _dataListener = null;
 let _metaListener = null;
 let _historyRefreshTimer = null;
 let _detailOrderId = null;
-let currentOrderType = 'order';  // 'order' | 'return' | 'exchange'
+const currentOrderType = 'order';  // ★ 반품/교환 제거 — 항상 일반주문
 let _editOrderId = null;
 let _submitting = false;    // 이중제출 방지 플래그
 
@@ -1481,23 +1455,11 @@ function toggleProduct(product, price){
 ═══════════════════════════════════════════════════ */
 function resetOrder(){
   cart = [];
-  currentOrderType = 'order';
-  setOrderType('order');
   goToStepUI(1);
   loadProductGrid();
   document.getElementById('orderMemo').value = '';
 }
 
-function setOrderType(type){
-  currentOrderType = type;
-  ['order','return','exchange'].forEach(t => {
-    const btn = document.getElementById('otype_'+t);
-    if(btn) btn.classList.toggle('active', t === type);
-  });
-  const titles = {order:'주문할 상품을 선택하세요', return:'반품할 상품을 선택하세요', exchange:'교환할 상품을 선택하세요'};
-  const titleEl = document.getElementById('step1Title');
-  if(titleEl) titleEl.textContent = titles[type]||titles.order;
-}
 
 function goToStepUI(n){
   document.getElementById('orderStep1').style.display = n===1 ? 'block' : 'none';
@@ -1631,8 +1593,6 @@ function renderOrderTotal(){
 function renderConfirm(){
   const subtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const memo = document.getElementById('orderMemo').value;
-  const typeLabels = {order:'일반주문', return:'반품', exchange:'교환'};
-  const typeColors = {order:'var(--ky)', return:'#d97706', exchange:'#2563eb'};
   const rows = cart.map(c =>
     `<div class="confirm-row">
       <span class="confirm-row-label">${c.product}</span>
@@ -1644,10 +1604,6 @@ function renderConfirm(){
     <div class="confirm-row">
       <span class="confirm-row-label">대리점</span>
       <span class="confirm-row-value">${currentDealer.name}</span>
-    </div>
-    <div class="confirm-row">
-      <span class="confirm-row-label">주문 유형</span>
-      <span class="confirm-row-value" style="color:${typeColors[currentOrderType]||'var(--ky)'}; font-weight:800">${typeLabels[currentOrderType]||'일반주문'}</span>
     </div>
     <div class="confirm-row">
       <span class="confirm-row-label">주문일</span>
@@ -1684,7 +1640,6 @@ async function submitOrder(){
     const subtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
     const memo = document.getElementById('orderMemo').value;
 
-    const typeLabels = {order:'일반주문', return:'반품', exchange:'교환'};
     const order = {
       id: orderId,
       dealerId: currentDealer.id,
@@ -1694,8 +1649,8 @@ async function submitOrder(){
       totalQty: cart.reduce((s, c) => s + c.qty, 0),
       memo: memo || '',
       status: 'pending',
-      orderType: currentOrderType,
-      orderTypeLabel: typeLabels[currentOrderType]||'일반주문',
+      orderType: 'order',
+      orderTypeLabel: '일반주문',
       orderDate: today(),
       createdAt: new Date().toISOString(),
       statusUpdatedAt: '',
@@ -1704,7 +1659,7 @@ async function submitOrder(){
 
     // Firebase에 저장: ky_orders/{orderId}
     await fb.set(fb.ref(fb.db, 'ky_orders/' + orderId), order);
-    await touchKyMutation('create', orderId, { orderType: order.orderType || 'order' });
+    await touchKyMutation('create', orderId, {});
 
     // ★★★ kyOrders.unshift(order) 제거 ★★★
     // onValue 리스너가 Firebase 변경을 감지해서 자동으로 kyOrders를 갱신함
@@ -1721,8 +1676,7 @@ async function submitOrder(){
 
     // ★ 제출 성공 후 cart와 UI 완전 초기화
     cart = [];
-    currentOrderType = 'order';
-    document.getElementById('orderMemo').value = '';
+      document.getElementById('orderMemo').value = '';
 
     // ★ 홈으로 이동
     showPage('home');
@@ -1770,7 +1724,6 @@ async function sendTelegramKY(chatId, text){
 
 /* 신규 주문 → 총관리자 + 일반 관리자 텔레그램 */
 async function sendTelegramOrder(order){
-  const typeLabels = {order:'일반주문', return:'반품', exchange:'교환'};
   const now = new Date().toLocaleString('ko-KR', {
     month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
   });
@@ -1781,7 +1734,7 @@ async function sendTelegramOrder(order){
     '📦 <b>새 주문 접수!</b>',
     '',
     '🏢 대리점: <b>' + order.dealerName + '</b>',
-    '📋 유형: ' + (typeLabels[order.orderType] || order.orderTypeLabel || '일반주문'),
+  
     '📅 주문일: ' + order.orderDate,
     '',
     '<b>주문 상품:</b>'
@@ -1853,13 +1806,12 @@ function renderOrderHistoryList(list){
 function orderItemHTML(o){
   const statusMap = {
     pending:  {label:'대기중', cls:'status-pending'},
-    accepted: {label:'접수완료', cls:'status-accepted'},
+    accepted: {label:'처리중', cls:'status-pending'},
     rejected: {label:'거절됨', cls:'status-rejected'},
     shipped:  {label:'출고완료', cls:'status-shipped'},
-    received: {label:'반품완료', cls:'status-accepted'},
+    
     cancelled:{label:'취소됨', cls:'status-rejected'}
   };
-  const orderTypeMap = {order:'일반', return:'반품', exchange:'교환'};
   const s = statusMap[o.status] || {label:o.status, cls:'status-pending'};
   const itemsText = (o.items||[]).map(i => `${i.product} ${fmt(i.qty)}개`).join(' · ');
   const typeBadge = o.orderType && o.orderType !== 'order'
@@ -1894,10 +1846,10 @@ function openOrderDetail(id){
   _detailOrderId = id;
   const statusMap = {
     pending:  {label:'대기중 ⏳', cls:'status-pending'},
-    accepted: {label:'접수완료 ✅', cls:'status-accepted'},
+    accepted: {label:'처리중 ⏳', cls:'status-pending'},
     rejected: {label:'거절됨 ❌', cls:'status-rejected'},
     shipped:  {label:'출고완료 🚚', cls:'status-shipped'},
-    received: {label:'반품완료 📥', cls:'status-accepted'},
+    
     cancelled:{label:'취소됨 ✕', cls:'status-rejected'}
   };
   const s = statusMap[o.status] || {label:o.status, cls:'status-pending'};
@@ -2112,14 +2064,11 @@ function renderHome(){
   const myOrders = kyOrders.filter(o => o.dealerId === currentDealer.id);
   const monthOrders = myOrders.filter(o => o.orderDate.startsWith(mo) && o.status !== 'cancelled');
   const pending = myOrders.filter(o => o.status === 'pending').length;
-  const accepted = myOrders.filter(o => o.status === 'accepted').length;
   const monthAmt = monthOrders.reduce((s, o) => s + o.total, 0);
 
   document.getElementById('kpiMonthCount').textContent = fmt(monthOrders.length);
   document.getElementById('kpiMonthAmt').textContent = fmt(monthAmt);
   document.getElementById('kpiPending').textContent = fmt(pending);
-  document.getElementById('kpiAccepted').textContent = fmt(accepted);
-
   // ★ 최근 5개 (취소 제외)
   const recent = myOrders.filter(o => o.status !== 'cancelled').slice(0, 5);
   const el = document.getElementById('recentOrders');
@@ -2155,7 +2104,19 @@ function startListeners(){
       }
 
       const all = snap.val();
-      kyOrders = sortKyOrdersDesc(Object.values(all).filter(o => o.dealerId === currentDealer.id));
+      const allList = Object.values(all);
+
+      // ★ 6개월 이전 주문 자동 삭제 (가볍게 유지)
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      const cutoff = sixMonthsAgo.toISOString().slice(0, 10);
+      for(const o of allList){
+        if((o.createdAt||o.orderDate||'') < cutoff){
+          try{ await fb.set(fb.ref(fb.db,'ky_orders/'+o.id), null); }catch(e2){}
+        }
+      }
+
+      kyOrders = sortKyOrdersDesc(allList.filter(o => o.dealerId === currentDealer.id && (o.createdAt||o.orderDate||'') >= cutoff));
 
       // 상태 변화 감지 → 알림
       if(baselineLoaded){
