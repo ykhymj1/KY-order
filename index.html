@@ -1218,10 +1218,10 @@ function saveFbSettingsMain(){
 const KY_BOT_TOKEN   = '8615303756:AAEWCz82f6LBzgBx769v1xbUkJ6SOM7rpjk';
 const KY_ADMIN_CHAT  = '1988388217';
 
-// ★ 일반 관리자 텔레그램 Chat ID 목록 (나중에 추가)
-const KY_ADMIN_EXTRA_CHATS = [
-  // '111222333',  // 일반관리자1 Chat ID — 추가 예정
-  // '444555666',  // 일반관리자2 Chat ID — 추가 예정
+// ★ 일반 관리자 텔레그램 (주문 접수 + 코드 요청 시 알림)
+const KY_NORMAL_ADMIN_TELEGRAMS = [
+  { name: '김진아', token: '8571539059:AAG1BU5DH2h9Q0qoJk-46a2p3FfYkdEYnvI', chatId: '8505927461' },
+  { name: '강승섭', token: '8371712654:AAFFSRwDWBokRdcj8TVIWW4kC45J3bcoXvI', chatId: '1740618685' },
 ];
 
 async function sendCodeRequest(){
@@ -1243,12 +1243,12 @@ async function sendCodeRequest(){
     if(d.ok) ok=true;
   }catch(e){}
 
-  // ② 일반 관리자 텔레그램 발송 (추가된 Chat ID 모두)
-  for(const chatId of KY_ADMIN_EXTRA_CHATS){
+  // ② 일반 관리자 텔레그램 발송 (각자 봇 토큰으로)
+  for(const admin of KY_NORMAL_ADMIN_TELEGRAMS){
     try{
-      await fetch('https://api.telegram.org/bot'+KY_BOT_TOKEN+'/sendMessage',{
+      await fetch('https://api.telegram.org/bot'+admin.token+'/sendMessage',{
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({chat_id:chatId, text, parse_mode:'HTML'})
+        body: JSON.stringify({chat_id:admin.chatId, text, parse_mode:'HTML'})
       });
     }catch(e){}
   }
@@ -1471,7 +1471,7 @@ function toggleProduct(product, price){
   if(idx >= 0){
     cart.splice(idx, 1);
   } else {
-    cart.push({ product, price, qty: 0 });
+    cart.push({ product, price, qty: 1 });  // cart에는 1로 초기화 (제출 검증용)
   }
   loadProductGrid();
 }
@@ -1526,14 +1526,17 @@ function backToStep1(){ goToStepUI(1); }
 function goToStep3(){
   if(!cart.length){ toast('장바구니가 비었습니다','error'); return; }
   // ★ input 필드에서 최신 수량 동기화
+  let hasEmpty = false;
   cart.forEach((item, idx) => {
     const el = document.getElementById('qtyNum_'+idx);
     if(el && el.tagName === 'INPUT'){
       const raw = el.value.replace(/[^0-9]/g,'');
       const num = parseInt(raw)||0;
       if(num >= 1) item.qty = num;
+      else hasEmpty = true;
     }
   });
+  if(hasEmpty){ toast('수량을 입력하세요','error'); return; }
   const hasZeroQty = cart.some(c => c.qty <= 0);
   if(hasZeroQty){ toast('수량은 1개 이상이어야 합니다','error'); return; }
   goToStepUI(3);
@@ -1549,12 +1552,12 @@ function renderCartItems(){
       <div class="cart-item-icon">${icons[item.product]||'📦'}</div>
       <div class="cart-item-info">
         <div class="cart-item-name">${item.product}</div>
-        <div class="cart-item-price">${fmt(item.price)}원 × <span id="qtyDisp_${idx}">${item.qty > 0 ? item.qty.toLocaleString('ko-KR') : ''}</span>개 = <b style="color:var(--ky)">${fmt(item.price*(item.qty||0))}원</b></div>
+        <div class="cart-item-price">${fmt(item.price)}원 × <span id="qtyDisp_${idx}">${item.qty.toLocaleString('ko-KR')}</span>개 = <b style="color:var(--ky)">${fmt(item.price*item.qty)}원</b></div>
       </div>
       <div class="cart-qty">
         <input type="text" inputmode="numeric" class="qty-input"
           id="qtyNum_${idx}"
-          value="${item.qty > 0 ? item.qty.toLocaleString('ko-KR') : ''}"
+          value=""
           onInput="onQtyInput(${idx},this)"
           onFocus="this.select()"
           placeholder="수량">
@@ -1570,21 +1573,15 @@ function onQtyInput(idx, el){
   // 숫자 외 제거 (콤마 등 허용)
   let raw = el.value.replace(/[^0-9]/g,'');
   let num = parseInt(raw)||0;
-  // 빈칸 허용 (직접 입력 편의성): 0이면 표시는 비워두고 저장만
+  if(num < 1) num = 1;
   if(num > 99999) num = 99999;
   cart[idx].qty = num;
-  // 0이면 콤마 없이 빈칸 표시
-  if(num > 0){
-    const formatted = num.toLocaleString('ko-KR');
-    const start = el.selectionStart, end = el.selectionEnd;
-    el.value = formatted;
-    try{ el.setSelectionRange(start, end); }catch(e){}
-  } else {
-    el.value = raw; // 입력 중인 상태 유지
-  }
+  // 콤마 자동 삽입 (커서 위치 유지)
+  const formatted = num.toLocaleString('ko-KR');
+  el.value = formatted;
   // 합계 업데이트
   const qDisp = document.getElementById('qtyDisp_'+idx);
-  if(qDisp) qDisp.textContent = num > 0 ? num.toLocaleString('ko-KR') : '';
+  if(qDisp) qDisp.textContent = num.toLocaleString('ko-KR');
   renderOrderTotal();
   const cartItemInfo = document.querySelectorAll('.cart-item')[idx];
   if(cartItemInfo){
@@ -1771,7 +1768,7 @@ async function sendTelegramKY(chatId, text){
   }
 }
 
-/* 신규 주문 → 총관리자 텔레그램 */
+/* 신규 주문 → 총관리자 + 일반 관리자 텔레그램 */
 async function sendTelegramOrder(order){
   const typeLabels = {order:'일반주문', return:'반품', exchange:'교환'};
   const now = new Date().toLocaleString('ko-KR', {
@@ -1795,7 +1792,20 @@ async function sendTelegramOrder(order){
     order.memo ? '📝 메모: ' + order.memo : '',
     '🕐 접수: ' + now
   ]).filter(function(l){ return l !== ''; });
-  await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, lines.join('\n'));
+  const text = lines.join('\n');
+
+  // 총관리자
+  await sendTelegramKY(KY_SUPER_ADMIN_CHAT_ID, text);
+
+  // ★ 일반 관리자 (각자 봇 토큰으로 발송)
+  for(const admin of KY_NORMAL_ADMIN_TELEGRAMS){
+    try{
+      await fetch('https://api.telegram.org/bot'+admin.token+'/sendMessage',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({chat_id:admin.chatId, text, parse_mode:'HTML'})
+      });
+    }catch(e){}
+  }
 }
 
 /* ═══════════════════════════════════════════════════
@@ -2306,7 +2316,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // (claude.ai, 로컬 등 다른 환경에서는 보안 정책상 등록 불가 → 무시)
   if('serviceWorker' in navigator && location.hostname.endsWith('github.io')){
     const swPath = '/KY-order/sw.js';
-    navigator.serviceWorker.register(swPath + '?v=20260413-hotfix3')
+    navigator.serviceWorker.register(swPath + '?v=20260416-fix1')
       .then(r => console.log('[KY SW] 등록 완료:', r.scope))
       .catch(e => console.log('[KY SW] 등록 스킵 (정상):', e.message));
   }
