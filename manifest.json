@@ -1,11 +1,11 @@
 {
-  "name": "KY 주문 시스템",
-  "short_name": "KY주문",
+  "name": "KY Order",
+  "short_name": "KY order",
   "description": "KY 대리점 주문 앱",
   "start_url": "/KY-order/",
   "display": "standalone",
   "background_color": "#fffbeb",
-  "theme_color": "#d97706",
+  "theme_color": "#4263eb",
   "orientation": "portrait-primary",
   "icons": [
     {
